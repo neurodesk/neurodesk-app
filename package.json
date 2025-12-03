@@ -2,7 +2,7 @@
   "name": "neurodeskapp",
   "jlab_version": "4.0.0-1",
   "version": "1.13.1",
-  "tinyrange_version": "0.3.2",
+  "tinyrange_version": "0.4.0",
   "description": "Neurodesk App",
   "main": "./build/out/main/main.js",
   "scripts": {
