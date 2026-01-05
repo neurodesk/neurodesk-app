@@ -147,7 +147,11 @@ function createLaunchScript(
   if (serverInfo.serverArgs) {
     additionalDir = resolveWorkingDirectory(serverInfo.serverArgs);
     if (process.platform === 'linux') {
-      fs.chmodSync(additionalDir, 0o777);
+      try {
+        fs.chmodSync(additionalDir, 0o777);
+      } catch (e) {
+        console.error(`Failed to chmod ${additionalDir}: ${e}`);
+      }
     }
     launchArgs.push(
       isTinyRange
