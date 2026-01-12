@@ -160,6 +160,20 @@ function createLaunchScript(
           }":/data`
         : ` --volume "${additionalDir}":/data`
     );
+  } else {
+    const workingDir = serverInfo.workingDirectory;
+    if (process.platform === 'linux') {
+      fs.chmodSync(workingDir, 0o777);
+    }
+    if (workingDir) {
+      launchArgs.push(
+        isTinyRange
+          ? `--mount-rw "${
+              isWin ? workingDir.replace(/\\/g, '//') : workingDir
+            }":/data`
+          : ` --volume "${workingDir}":/data`
+      );
+    }
   }
   launchArgs.push(imageRegistry);
 
