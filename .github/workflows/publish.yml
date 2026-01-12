@@ -91,7 +91,7 @@ jobs:
 
       - name: Create Application Installer for Release
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: true # disable code signing if not release asset
+          CSC_IDENTITY_AUTO_DISCOVERY: true
           CSC_FOR_PULL_REQUEST: true
           APPLEID: ${{ secrets.APPLEID }}
           APPLEIDPASS: ${{ secrets.APPLEIDPASS }}

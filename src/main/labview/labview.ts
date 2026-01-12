@@ -177,19 +177,61 @@ export class LabView implements IDisposable {
         const stats = fs.lstatSync(filePath);
         if (stats.isFile()) {
           await this._view.webContents.executeJavaScript(`
-            {
+            (async () => {
               const lab = window.jupyterapp || window.jupyterlab;
               if (lab) {
-                lab.commands.execute('docmanager:open', { path: '${relPath}' });
+                const relPath = '${relPath}';
+                
+                // Try different path variations to find the correct one
+                const pathsToTry = [
+                  relPath,                    // Direct relative path
+                  'data/' + relPath,          // With data/ prefix
+                  '/data/' + relPath          // With /data/ prefix
+                ];
+                
+                let successfulPath = null;
+                
+                // Find which path works
+                for (const pathToTry of pathsToTry) {
+                  try {
+                    const contents = await lab.serviceManager.contents.get(pathToTry, { content: false });
+                    console.log('[openFiles JS] File found at path:', pathToTry);
+                    successfulPath = pathToTry;
+                    break;
+                  } catch (err) {
+                    console.log('[openFiles JS] Path failed:', pathToTry, err.message);
+                  }
+                }
+                
+                if (!successfulPath) {
+                  // List root directory to help debug
+                  try {
+                    const rootContents = await lab.serviceManager.contents.get('', { content: true });
+                    console.log('[openFiles JS] Root directory contents:', rootContents.content.map(item => item.name));
+                  } catch (err) {
+                    console.error('[openFiles JS] Could not list root directory:', err.message);
+                  }
+                }
+                
+                try {
+                  await lab.commands.execute('docmanager:open', { path: successfulPath });
+                  console.log('[openFiles JS] File opened successfully at path:', successfulPath);
+                } catch (err) {
+                  console.error('[openFiles JS] Error opening file:', err.message);
+                }
+              } else {
+                console.error('[openFiles JS] Lab object not found!');
               }
-            }
-            0; // response
+            })()
           `);
         } else {
-          log.error(`Valid file not found at path: ${path}`);
+          log.error(`[openFiles] Valid file not found at path: ${filePath}`);
         }
       } catch (error) {
-        log.error(`Failed to open file at path: ${path}. Error: `, error);
+        log.error(
+          `[openFiles] Failed to open file at path: ${filePath}. Error: `,
+          error
+        );
       }
     });
   }
