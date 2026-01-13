@@ -146,11 +146,12 @@ function createLaunchScript(
   if (serverInfo.workingDirectory) {
     additionalDir = resolveWorkingDirectory(serverInfo.workingDirectory);
     if (process.platform === 'linux') {
-      try {
-        fs.chmodSync(additionalDir, 0o777);
-      } catch (e) {
-        console.error(`Failed to chmod ${additionalDir}: ${e}`);
-      }
+      // Async chmod to avoid blocking when directory is large, container will mount regardless
+      fs.promises.chmod(additionalDir, 0o777).catch(e => {
+        log.warn(
+          `Failed to chmod ${additionalDir} (continuing anyway): ${e.message}`
+        );
+      });
     }
     launchArgs.push(
       isTinyRange
