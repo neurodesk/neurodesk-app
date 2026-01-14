@@ -146,12 +146,21 @@ function createLaunchScript(
   if (serverInfo.workingDirectory) {
     additionalDir = resolveWorkingDirectory(serverInfo.workingDirectory);
     if (process.platform === 'linux') {
-      // Async chmod to avoid blocking when directory is large, container will mount regardless
-      fs.promises.chmod(additionalDir, 0o777).catch(e => {
-        log.warn(
-          `Failed to chmod ${additionalDir} (continuing anyway): ${e.message}`
+      // Only chmod if directory is in /home
+      const isHomeDir = additionalDir.startsWith('/home/');
+
+      if (isHomeDir) {
+        // Async chmod to avoid blocking when directory is large, container will mount regardless
+        fs.promises.chmod(additionalDir, 0o777).catch(e => {
+          log.warn(
+            `Failed to chmod ${additionalDir} (continuing anyway): ${e.message}`
+          );
+        });
+      } else {
+        log.info(
+          `Skipping chmod for network/remote directory: ${additionalDir}`
         );
-      });
+      }
     }
     launchArgs.push(
       isTinyRange
