@@ -208,6 +208,13 @@ export class SessionWindow implements IDisposable {
           this._sessionConfig.persistSessionData,
           this._sessionConfig.partition
         );
+      } else {
+        // Local Lab session - start it
+        this._createSessionForLocal(
+          this._sessionConfig.workingDirectory,
+          this._sessionConfig.filesToOpen,
+          this._sessionConfig.pythonPath
+        );
       }
     } else {
       this._updateContentView();

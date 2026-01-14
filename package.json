@@ -70,6 +70,9 @@
         "rpm"
       ],
       "category": "Science;Development;",
+      "mimeTypes": [
+        "application/x-ipynb+json"
+      ],
       "extraResources": [
         {
           "from": "dist-resources/linux/neurodeskapp.sh",

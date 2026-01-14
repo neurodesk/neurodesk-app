@@ -252,7 +252,20 @@ function handleMultipleAppInstances(): Promise<void> {
           const sessionConfig = SessionConfig.createFromArgs(
             (cliArgs as unknown) as ICLIArguments
           );
-          jupyterApp.openSession(sessionConfig);
+
+          // On Linux, check if we have files to open from command line arguments
+          // This handles the case when a file is double-clicked
+          if (sessionConfig) {
+            jupyterApp.openSession(sessionConfig);
+          } else if (cliArgs._ && cliArgs._.length > 0) {
+            // Handle file paths passed directly (e.g., from file manager)
+            const filePaths = cliArgs._.map((f: string) =>
+              path.isAbsolute(f) ? f : path.resolve(cwd, f)
+            );
+            jupyterApp.handleOpenFilesOrFolders(filePaths);
+          } else {
+            console.warn(`[SECOND-INSTANCE] No files found in cliArgs`);
+          }
         }
       });
       resolve();
