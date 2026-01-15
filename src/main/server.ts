@@ -218,13 +218,13 @@ function createLaunchScript(
           )
         FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${imageRegistry} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
         if "%IMAGE_EXISTS%"=="exists" (
-            echo "Image exists"
+            echo "Image exists. Starting container..."
             FOR /F "usebackq delims=" %%i IN (\`${engineType} container inspect -f "{{.State.Status}}" neurodeskapp-${strPort}\`) DO SET CONTAINER_STATUS=%%i
               ${stopCmd} 
               ${volumeCreate}
               ${launchCmd}
         ) else (
-            echo "Image does not exist"
+            echo "Image does not exist. Start downloading..."
             ${stopCmd} 
             ${volumeCreate}            
             ${engineType} pull docker.io/${imageRegistry}
