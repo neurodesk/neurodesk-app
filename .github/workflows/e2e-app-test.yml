@@ -1,0 +1,366 @@
+name: E2E Electron App Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Override image tag (default: from neurodesktop.toml)'
+        required: false
+        type: string
+  schedule:
+    - cron: '0 6 * * 1' # Weekly Monday 6 AM UTC
+
+jobs:
+  e2e-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+            arch: amd64
+            tinyrange_os: linux-amd64
+          - os: macos
+            runner: macos-latest
+            arch: arm64
+            tinyrange_os: darwin-arm64
+          - os: windows
+            runner: windows-latest
+            arch: amd64
+            tinyrange_os: windows-amd64
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: |
+          npm install --global yarn --prefer-offline
+          yarn install
+
+      - name: Extract image tag
+        id: image
+        run: |
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          if [ -z "$IMAGE_TAG" ]; then
+            IMAGE_TAG=$(grep 'jupyter_neurodesk_version' neurodesktop.toml | sed 's/.*= *"\(.*\)"/\1/')
+          fi
+          echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Using image tag: $IMAGE_TAG"
+
+      - name: Setup Docker (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          brew install docker colima
+          colima start --memory 4 --disk 60
+          docker info
+
+      - name: Pre-pull Docker image
+        run: docker pull vnmd/neurodesktop:${{ steps.image.outputs.tag }}
+
+      - name: Get package info
+        id: package-info
+        run: |
+          echo "tinyrange_version=$(python3 scripts/get_package_version.py --package_name tinyrange)" >> "$GITHUB_OUTPUT"
+
+      - name: Install TinyRange
+        run: |
+          curl -o tinyrange.zip -L "https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version }}/tinyrange-${{ matrix.tinyrange_os }}.zip"
+          unzip tinyrange.zip
+
+      - name: Build unpacked app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: yarn pack
+
+      - name: Install xvfb (Linux)
+        if: matrix.os == 'linux'
+        run: sudo apt-get install -y xvfb
+
+      - name: Pre-configure app settings
+        run: |
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            SETTINGS_DIR="$HOME/.config/neurodeskapp"
+          elif [ "${{ matrix.os }}" = "macos" ]; then
+            SETTINGS_DIR="$HOME/Library/Application Support/neurodeskapp"
+          else
+            SETTINGS_DIR="$APPDATA/neurodeskapp"
+          fi
+
+          mkdir -p "$SETTINGS_DIR"
+          printf '%s\n' '{' \
+            '  "startupMode": "new-local-session",' \
+            '  "engineType": "docker",' \
+            '  "logLevel": "debug",' \
+            '  "checkForUpdatesAutomatically": false' \
+            '}' > "$SETTINGS_DIR/settings.json"
+
+          # Create storage and working directories
+          mkdir -p ~/neurodesktop-storage
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            mkdir -p "$TEMP/neurodesk-test"
+          else
+            mkdir -p /tmp/neurodesk-test
+          fi
+
+      - name: Launch app in background
+        id: app
+        run: |
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            WORKING_DIR="/tmp/neurodesk-test"
+            xvfb-run --auto-servernum dist/linux-unpacked/neurodeskapp \
+              --working-dir "$WORKING_DIR" --log-level debug &
+            APP_PID=$!
+          elif [ "${{ matrix.os }}" = "macos" ]; then
+            WORKING_DIR="/tmp/neurodesk-test"
+            dist/mac-arm64/NeurodeskApp.app/Contents/MacOS/NeurodeskApp \
+              --working-dir "$WORKING_DIR" --log-level debug &
+            APP_PID=$!
+          else
+            WORKING_DIR="$TEMP/neurodesk-test"
+            dist/win-unpacked/NeurodeskApp.exe \
+              --working-dir "$WORKING_DIR" --log-level debug &
+            APP_PID=$!
+          fi
+
+          echo "pid=$APP_PID" >> "$GITHUB_OUTPUT"
+          echo "working_dir=$WORKING_DIR" >> "$GITHUB_OUTPUT"
+          echo "Launched app with PID $APP_PID, working dir: $WORKING_DIR"
+
+      - name: Discover container (port + token)
+        id: container
+        run: |
+          echo "Waiting for neurodeskapp container to appear..."
+          CONTAINER=""
+          for i in $(seq 1 120); do
+            CONTAINER=$(docker ps --filter "name=neurodeskapp-" --format "{{.Names}}" | head -1)
+            if [ -n "$CONTAINER" ]; then
+              echo "Container found: $CONTAINER after $((i * 5))s"
+              break
+            fi
+            echo "Attempt $i: no container yet - waiting 5s..."
+            sleep 5
+          done
+
+          if [ -z "$CONTAINER" ]; then
+            echo "FAIL: No neurodeskapp container appeared within 10 minutes"
+            exit 1
+          fi
+
+          # Extract port from container name (neurodeskapp-<PORT>)
+          PORT="${CONTAINER##*-}"
+          echo "Discovered port: $PORT"
+
+          # Extract token from container command args
+          TOKEN=$(docker inspect "$CONTAINER" --format '{{json .Config.Cmd}}' | grep -oE "jlab:srvr:[a-f0-9]+")
+          echo "Discovered token: $TOKEN"
+
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "container=$CONTAINER" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Jupyter server ready
+        run: |
+          PORT=${{ steps.container.outputs.port }}
+          TOKEN=${{ steps.container.outputs.token }}
+          URL="http://127.0.0.1:${PORT}/lab?token=${TOKEN}"
+
+          echo "Waiting for server at $URL ..."
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" 2>/dev/null || echo "000")
+            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ] 2>/dev/null; then
+              echo "Server is up (HTTP $STATUS) after $((i * 5))s"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS - waiting 5s..."
+            sleep 5
+          done
+
+          echo "Server failed to start within 5 minutes"
+          echo "=== Container logs ==="
+          docker logs "${{ steps.container.outputs.container }}" 2>&1 || true
+          exit 1
+
+      - name: 'Test: Terminal - module load + tool use'
+        run: |
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
+
+          echo "=== Loading FSL module via terminal ==="
+          docker exec "$CONTAINER_NAME" bash -c '
+            source /etc/profile
+            module load fsl/6.0.7.16
+            echo "--- which bet ---"
+            which bet
+            echo "--- bet help ---"
+            bet 2>&1 | head -5
+          '
+
+          echo "=== Verifying bet output ==="
+          OUTPUT=$(docker exec "$CONTAINER_NAME" bash -c '
+            source /etc/profile
+            module load fsl/6.0.7.16
+            bet 2>&1 | head -5
+          ')
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qi "usage\|bet"; then
+            echo "PASS: Terminal module load + tool use"
+          else
+            echo "FAIL: bet output did not contain expected text"
+            exit 1
+          fi
+
+      - name: 'Test: Notebook - module load + tool use'
+        run: |
+          PORT=${{ steps.container.outputs.port }}
+          TOKEN=${{ steps.container.outputs.token }}
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
+
+          echo "=== Creating test notebook via Jupyter API ==="
+          NOTEBOOK_JSON='{"type":"notebook","content":{"cells":[{"cell_type":"code","source":["import module\nawait module.load(\"fsl/6.0.7.16\")\nawait module.list()"],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["import subprocess\nresult = subprocess.run([\"bet\"], capture_output=True, text=True)\nprint(result.stderr[:200])\nassert \"bet\" in result.stderr.lower() or \"usage\" in result.stderr.lower(), \"bet command not working\""],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["print(\"NOTEBOOK_TEST_PASSED\")"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},"nbformat":4,"nbformat_minor":4}}'
+
+          curl -sf -X PUT \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$NOTEBOOK_JSON" \
+            "http://127.0.0.1:${PORT}/api/contents/ci_test.ipynb"
+
+          echo "=== Installing papermill ==="
+          docker exec "$CONTAINER_NAME" pip install -q papermill
+
+          echo "=== Executing notebook with papermill ==="
+          docker exec "$CONTAINER_NAME" papermill ci_test.ipynb ci_test_output.ipynb --no-progress-bar
+
+          echo "=== Verifying notebook output ==="
+          docker exec "$CONTAINER_NAME" python3 -c "
+          import json
+          with open('/home/jovyan/ci_test_output.ipynb') as f:
+              nb = json.load(f)
+          passed = False
+          for cell in nb['cells']:
+              for out in cell.get('outputs', []):
+                  text = ''.join(out.get('text', []))
+                  if 'NOTEBOOK_TEST_PASSED' in text:
+                      passed = True
+                  if 'error' in out.get('output_type', ''):
+                      print('ERROR:', out.get('evalue', ''))
+                      exit(1)
+          assert passed, 'NOTEBOOK_TEST_PASSED not found in output'
+          print('PASS: Notebook executed successfully')
+          "
+
+      - name: 'Test: Volume mount (working dir -> /data)'
+        run: |
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
+          WORKING_DIR="${{ steps.app.outputs.working_dir }}"
+
+          echo "=== Writing file from inside container to /data ==="
+          docker exec "$CONTAINER_NAME" bash -c 'echo "workdir-mount-ok" > /data/ci-test.txt'
+
+          echo "=== Reading file from host working dir ==="
+          if cat "$WORKING_DIR/ci-test.txt" | grep -q "workdir-mount-ok"; then
+            echo "PASS: Working dir volume mount works (/data)"
+          else
+            echo "FAIL: Could not read /data mount from host at $WORKING_DIR/ci-test.txt"
+            exit 1
+          fi
+
+          echo "=== Testing neurodesktop-storage mount ==="
+          docker exec "$CONTAINER_NAME" bash -c 'echo "storage-mount-ok" > /neurodesktop-storage/ci-test.txt'
+
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            STORAGE_DIR="$HOME/neurodesktop-storage"
+          else
+            STORAGE_DIR="$HOME/neurodesktop-storage"
+          fi
+
+          if cat "$STORAGE_DIR/ci-test.txt" | grep -q "storage-mount-ok"; then
+            echo "PASS: neurodesktop-storage volume mount works"
+          else
+            echo "FAIL: Could not read neurodesktop-storage mount from host"
+            exit 1
+          fi
+
+      - name: 'Test: Clean shutdown via app'
+        run: |
+          APP_PID=${{ steps.app.outputs.pid }}
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
+
+          echo "=== Sending SIGTERM to Electron app (PID $APP_PID) ==="
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            taskkill //PID $APP_PID //T //F 2>/dev/null || true
+          else
+            kill -TERM "$APP_PID" 2>/dev/null || true
+          fi
+
+          echo "=== Waiting for container to disappear ==="
+          for i in $(seq 1 12); do
+            if ! docker ps -q -f "name=$CONTAINER_NAME" | grep -q .; then
+              echo "PASS: Container stopped after app shutdown ($((i * 5))s)"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "WARN: Container did not stop within 60s after app shutdown"
+          echo "This means the app's dispose -> killAllServers -> server.stop chain may not be working"
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          APP_PID=${{ steps.app.outputs.pid }}
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
+
+          echo "=== Electron app logs ==="
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            LOG_FILE="$HOME/.config/neurodeskapp/logs/main.log"
+          elif [ "${{ matrix.os }}" = "macos" ]; then
+            LOG_FILE="$HOME/Library/Logs/neurodeskapp/main.log"
+          else
+            LOG_FILE="$APPDATA/neurodeskapp/logs/main.log"
+          fi
+          if [ -f "$LOG_FILE" ]; then
+            echo "--- $LOG_FILE ---"
+            cat "$LOG_FILE" 2>/dev/null || true
+          else
+            echo "No electron log file found at $LOG_FILE"
+          fi
+
+          echo "=== Container logs ==="
+          if [ -n "$CONTAINER_NAME" ]; then
+            docker logs "$CONTAINER_NAME" 2>&1 | tail -50 || true
+          fi
+
+          echo "=== Force cleanup ==="
+          # Kill app if still running
+          if [ -n "$APP_PID" ]; then
+            if [ "${{ matrix.os }}" = "windows" ]; then
+              taskkill //PID $APP_PID //T //F 2>/dev/null || true
+            else
+              kill -9 "$APP_PID" 2>/dev/null || true
+            fi
+          fi
+
+          # Remove any leftover containers
+          docker ps -a --filter "name=neurodeskapp-" --format "{{.Names}}" | while read name; do
+            docker rm -f "$name" 2>/dev/null || true
+          done
+          docker volume rm neurodesk-home 2>/dev/null || true
+
+          # Clean up test files
+          WORKING_DIR="${{ steps.app.outputs.working_dir }}"
+          rm -rf "$WORKING_DIR" 2>/dev/null || true
+          rm -f ~/neurodesktop-storage/ci-test.txt 2>/dev/null || true
