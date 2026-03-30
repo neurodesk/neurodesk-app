@@ -56,7 +56,7 @@ jobs:
         run: |
           IMAGE_TAG="${{ inputs.image_tag }}"
           if [ -z "$IMAGE_TAG" ]; then
-            IMAGE_TAG=$(grep 'jupyter_neurodesk_version' neurodesktop.toml | sed 's/.*= *"\(.*\)"/\1/')
+            IMAGE_TAG=$(grep '^jupyter_neurodesk_version' neurodesktop.toml | sed 's/.*= *"\(.*\)"/\1/')
           fi
           echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
           echo "Using image tag: $IMAGE_TAG"
