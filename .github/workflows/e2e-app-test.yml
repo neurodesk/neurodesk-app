@@ -64,12 +64,12 @@ jobs:
       - name: Setup Docker (macOS)
         if: matrix.os == 'macos'
         run: |
-          brew install docker colima
-          colima start --memory 4 --disk 60
+          brew install docker colima qemu
+          colima start --memory 4 --disk 60 --vm-type=qemu
           docker info
 
       - name: Pre-pull Docker image
-        run: docker pull vnmd/neurodesktop:${{ steps.image.outputs.tag }}
+        run: docker pull --platform linux/amd64 vnmd/neurodesktop:${{ steps.image.outputs.tag }}
 
       - name: Get package info
         id: package-info
@@ -152,7 +152,7 @@ jobs:
               break
             fi
             echo "Attempt $i: no container yet - waiting 5s..."
-            sleep 5
+            sleep 15
           done
 
           if [ -z "$CONTAINER" ]; then
