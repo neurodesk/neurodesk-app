@@ -20,27 +20,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Docker on all platforms
-          - os: linux
-            runner: ubuntu-latest
-            engine: docker
-          - os: macos
-            runner: macos-latest
-            engine: docker
-          - os: windows
-            runner: windows-latest
-            engine: docker
-          # Podman on Linux
-          - os: linux
-            runner: ubuntu-latest
-            engine: podman
-          # TinyRange on Linux (QEMU-based VM)
-          - os: linux
-            runner: ubuntu-latest
-            engine: tinyrange
+        cfg:
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker }
+          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: docker }
+          - { platform: macos, platform_name: macOS, os: macos-latest, tinyrange_os: darwin-arm64, engine: docker }
+          - { platform: windows, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker }
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman }
+          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: podman }
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange }
+          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: tinyrange }
 
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.cfg.os }}
     timeout-minutes: 45
 
     defaults:
@@ -67,14 +57,14 @@ jobs:
           yarn install
 
       - name: Setup Docker (macOS)
-        if: matrix.os == 'macos'
+        if: matrix.cfg.platform == 'macos'
         uses: docker/setup-docker-action@v4
         # Optional: Customize resources if your tests are heavy
         env:
           LIMA_START_ARGS: --cpus 4 --memory 8
 
       - name: Setup Docker (Windows)
-        if: matrix.os == 'windows'
+        if: matrix.cfg.platform == 'windows'
         shell: pwsh
         run: |
           Start-Service docker
@@ -87,23 +77,18 @@ jobs:
 
       - name: Install TinyRange
         run: |
-          if [ "${{ matrix.os }}" = "linux" ]; then
-            TR_OS="linux-amd64"
-          elif [ "${{ matrix.os }}" = "macos" ]; then
-            TR_OS="darwin-arm64"
-          else
-            TR_OS="windows-amd64"
-          fi
-          curl -o tinyrange.zip -L "https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version }}/tinyrange-${TR_OS}.zip"
+          curl -o tinyrange.zip -L https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version}}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip
           unzip tinyrange.zip
 
       - name: Build unpacked app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: yarn pack
+        run: |
+          yarn dist:${{ matrix.cfg.platform }}
+        if: steps.release-exists.outputs.result == 'false'
 
       - name: Install xvfb (Linux)
-        if: matrix.os == 'linux'
+        if: matrix.cfg.platform == 'linux-64' || matrix.cfg.platform == 'linux-arm64'
         run: sudo apt-get install -y xvfb
 
       # ───────────────────────────────────────────────
@@ -112,9 +97,9 @@ jobs:
 
       - name: Pre-configure app settings
         run: |
-          if [ "${{ matrix.os }}" = "linux" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             SETTINGS_DIR="$HOME/.config/neurodeskapp"
-          elif [ "${{ matrix.os }}" = "macos" ]; then
+          elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
             SETTINGS_DIR="$HOME/Library/Application Support/neurodeskapp"
           else
             SETTINGS_DIR="$APPDATA/neurodeskapp"
@@ -123,7 +108,7 @@ jobs:
           mkdir -p "$SETTINGS_DIR"
           printf '%s\n' '{' \
             '  "startupMode": "new-local-session",' \
-            '  "engineType": "${{ matrix.engine }}",' \
+            '  "engineType": "${{ matrix.cfg.engine }}",' \
             '  "logLevel": "debug",' \
             '  "checkForUpdatesAutomatically": false' \
             '}' > "$SETTINGS_DIR/settings.json"
@@ -133,7 +118,7 @@ jobs:
 
           # Create storage and working directories
           mkdir -p ~/neurodesktop-storage
-          if [ "${{ matrix.os }}" = "windows" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
             mkdir -p "$TEMP/neurodesk-test"
           else
             mkdir -p /tmp/neurodesk-test
@@ -144,10 +129,10 @@ jobs:
         run: |
           APP_LOG="/tmp/neurodeskapp-stdout.log"
 
-          if [ "${{ matrix.os }}" = "linux" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
             APP_BIN="dist/linux-64/neurodeskapp"
-          elif [ "${{ matrix.os }}" = "macos" ]; then
+          elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
             APP_BIN="dist/mac/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
           else
@@ -166,7 +151,7 @@ jobs:
           fi
 
           # Launch with stdout/stderr captured for diagnostics
-          if [ "${{ matrix.os }}" = "linux" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             xvfb-run --auto-servernum "$APP_BIN" \
               --working-dir "$WORKING_DIR" --log-level debug \
               > "$APP_LOG" 2>&1 &
@@ -190,7 +175,7 @@ jobs:
           echo "pid=$APP_PID" >> "$GITHUB_OUTPUT"
           echo "working_dir=$WORKING_DIR" >> "$GITHUB_OUTPUT"
           echo "app_log=$APP_LOG" >> "$GITHUB_OUTPUT"
-          echo "Launched app with PID $APP_PID, engine=${{ matrix.engine }}, working dir: $WORKING_DIR"
+          echo "Launched app with PID $APP_PID, engine=${{ matrix.cfg.engine }}, working dir: $WORKING_DIR"
 
       # ───────────────────────────────────────────────
       # App orchestration tests
@@ -200,7 +185,7 @@ jobs:
         id: container
         run: |
           APP_PID=${{ steps.app.outputs.pid }}
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           echo "Waiting for app (PID $APP_PID) to start $ENGINE backend..."
 
           # For Docker/Podman we discover the container via CLI.
@@ -211,7 +196,7 @@ jobs:
 
           for i in $(seq 1 120); do
             # Fail fast if the Electron app process has already exited
-            if [ "${{ matrix.os }}" = "windows" ]; then
+            if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
               APP_ALIVE=$(tasklist //FI "PID eq $APP_PID" 2>/dev/null | grep -c "$APP_PID" || true)
             else
               APP_ALIVE=$(kill -0 "$APP_PID" 2>/dev/null && echo 1 || echo 0)
@@ -219,9 +204,9 @@ jobs:
             if [ "$APP_ALIVE" = "0" ]; then
               echo "FAIL: Electron app (PID $APP_PID) exited before backend was ready"
               echo "=== Checking for app logs ==="
-              if [ "${{ matrix.os }}" = "linux" ]; then
+              if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
                 cat "$HOME/.config/neurodeskapp/logs/main.log" 2>/dev/null || true
-              elif [ "${{ matrix.os }}" = "macos" ]; then
+              elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
                 cat "$HOME/Library/Logs/neurodeskapp/main.log" 2>/dev/null || true
               else
                 cat "$APPDATA/neurodeskapp/logs/main.log" 2>/dev/null || true
@@ -241,9 +226,9 @@ jobs:
               # TinyRange: no container to discover. Scan for a listening port
               # started by the app. The app logs the port, but we can also check
               # common port range. Try ports from the app log.
-              if [ "${{ matrix.os }}" = "linux" ]; then
+              if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
                 LOG_FILE="$HOME/.config/neurodeskapp/logs/main.log"
-              elif [ "${{ matrix.os }}" = "macos" ]; then
+              elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
                 LOG_FILE="$HOME/Library/Logs/neurodeskapp/main.log"
               else
                 LOG_FILE="$APPDATA/neurodeskapp/logs/main.log"
@@ -276,7 +261,7 @@ jobs:
 
           if [ -z "$PORT" ] || [ -z "$TOKEN" ]; then
             echo "FAIL: Could not discover port/token for $ENGINE backend"
-            if [ "${{ matrix.os }}" = "linux" ]; then
+            if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
               cat "$HOME/.config/neurodeskapp/logs/main.log" 2>/dev/null || true
             fi
             exit 1
@@ -294,9 +279,9 @@ jobs:
           echo "container=$CONTAINER" >> "$GITHUB_OUTPUT"
 
       - name: 'Test: App-generated docker/podman flags are correct'
-        if: matrix.engine == 'docker' || matrix.engine == 'podman'
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
         run: |
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
           echo "=== Inspecting container config generated by server.ts ($ENGINE) ==="
@@ -357,8 +342,8 @@ jobs:
 
           echo "Server failed to start within 5 minutes"
           echo "=== Container/VM logs ==="
-          if [ "${{ matrix.engine }}" != "tinyrange" ]; then
-            ${{ matrix.engine }} logs "${{ steps.container.outputs.container }}" 2>&1 || true
+          if [ "${{ matrix.cfg.engine }}" != "tinyrange" ]; then
+            ${{ matrix.cfg.engine }} logs "${{ steps.container.outputs.container }}" 2>&1 || true
           fi
           exit 1
 
@@ -369,9 +354,9 @@ jobs:
       # ───────────────────────────────────────────────
 
       - name: 'Test: Terminal - module load + FSL bet'
-        if: matrix.engine == 'docker' || matrix.engine == 'podman'
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
         run: |
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
           echo "=== Loading FSL module via terminal ($ENGINE exec) ==="
@@ -389,9 +374,9 @@ jobs:
           fi
 
       - name: 'Test: Notebook - module load + FSL bet via papermill'
-        if: matrix.engine == 'docker' || matrix.engine == 'podman'
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
         run: |
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
           CONTAINER_NAME=${{ steps.container.outputs.container }}
@@ -430,7 +415,7 @@ jobs:
           "
 
       - name: 'Test: Notebook execution via Jupyter API (TinyRange)'
-        if: matrix.engine == 'tinyrange'
+        if: matrix.cfg.engine == 'tinyrange'
         run: |
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
@@ -473,9 +458,9 @@ jobs:
             "http://127.0.0.1:${PORT}/api/kernels/${KERNEL_ID}" || true
 
       - name: 'Test: File CRUD in /data (working dir)'
-        if: matrix.engine == 'docker' || matrix.engine == 'podman'
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
         run: |
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
           WORKING_DIR="${{ steps.app.outputs.working_dir }}"
 
@@ -535,9 +520,9 @@ jobs:
           fi
 
       - name: 'Test: File CRUD in neurodesk-storage'
-        if: matrix.engine == 'docker' || matrix.engine == 'podman'
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
         run: |
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
           STORAGE_DIR="$HOME/neurodesktop-storage"
 
@@ -597,7 +582,7 @@ jobs:
           fi
 
       - name: 'Test: File CRUD in neurodesk-storage via Jupyter API (TinyRange)'
-        if: matrix.engine == 'tinyrange'
+        if: matrix.cfg.engine == 'tinyrange'
         run: |
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
@@ -629,9 +614,9 @@ jobs:
           echo "PASS: File deleted via API"
 
       - name: 'Test: Graphical app launch (MRICron)'
-        if: matrix.os == 'linux' && (matrix.engine == 'docker' || matrix.engine == 'podman')
+        if: matrix.cfg.platform == 'linux' && (matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman')
         run: |
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
           echo "=== Loading MRICron module and verifying launch ==="
@@ -673,11 +658,11 @@ jobs:
       - name: 'Test: Clean shutdown via app (SIGTERM -> backend stop)'
         run: |
           APP_PID=${{ steps.app.outputs.pid }}
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
           echo "=== Sending SIGTERM to Electron app (PID $APP_PID) ==="
-          if [ "${{ matrix.os }}" = "windows" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
             taskkill //PID $APP_PID //T //F 2>/dev/null || true
           else
             kill -TERM "$APP_PID" 2>/dev/null || true
@@ -718,7 +703,7 @@ jobs:
         if: always()
         run: |
           APP_PID=${{ steps.app.outputs.pid }}
-          ENGINE="${{ matrix.engine }}"
+          ENGINE="${{ matrix.cfg.engine }}"
 
           echo "=== App stdout/stderr ==="
           APP_LOG="${{ steps.app.outputs.app_log }}"
@@ -729,9 +714,9 @@ jobs:
           fi
 
           echo "=== Electron app logs ==="
-          if [ "${{ matrix.os }}" = "linux" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             LOG_FILE="$HOME/.config/neurodeskapp/logs/main.log"
-          elif [ "${{ matrix.os }}" = "macos" ]; then
+          elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
             LOG_FILE="$HOME/Library/Logs/neurodeskapp/main.log"
           else
             LOG_FILE="$APPDATA/neurodeskapp/logs/main.log"
@@ -754,7 +739,7 @@ jobs:
           echo "=== Force cleanup ==="
           # Kill app if still running
           if [ -n "$APP_PID" ]; then
-            if [ "${{ matrix.os }}" = "windows" ]; then
+            if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
               taskkill //PID $APP_PID //T //F 2>/dev/null || true
             else
               kill -9 "$APP_PID" 2>/dev/null || true
