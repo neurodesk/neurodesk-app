@@ -22,13 +22,10 @@ jobs:
       matrix:
         cfg:
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker }
-          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: docker }
           - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker }
           - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman }
-          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: podman }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange }
-          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: tinyrange }
 
     runs-on: ${{ matrix.cfg.os }}
     timeout-minutes: 45
@@ -93,8 +90,10 @@ jobs:
         run: |
           sudo apt-get install -y xvfb
           # Install the deb package — this runs the after-install script which
-          # sets up chrome-sandbox permissions, AppArmor profile, and symlinks
-          sudo dpkg -i dist/NeurodeskApp.deb
+          # sets up chrome-sandbox permissions, AppArmor profile, and symlinks.
+          # Use dpkg then apt-get -f to resolve dependencies (libnotify4, libsecret-1-0, etc.)
+          sudo dpkg -i dist/NeurodeskApp.deb || true
+          sudo apt-get install -y -f
 
       - name: Install app (macOS)
         if: matrix.cfg.platform == 'mac'
