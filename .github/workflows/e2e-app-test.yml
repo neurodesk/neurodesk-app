@@ -72,8 +72,6 @@ jobs:
         # Optional: Customize resources if your tests are heavy
         env:
           LIMA_START_ARGS: --cpus 4 --memory 8
-        run: |
-          docker info
 
       - name: Setup Docker (Windows)
         if: matrix.os == 'windows'
