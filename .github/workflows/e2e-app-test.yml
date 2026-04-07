@@ -70,19 +70,39 @@ jobs:
         if: matrix.os == 'macos'
         run: |
           brew install docker colima
-          # Use Apple Virtualization.framework (vz) instead of QEMU on Apple Silicon.
-          # The QEMU driver hits a Lima panic ("send on closed channel") on recent
-          # Homebrew versions. vz is faster and more stable on arm64 runners.
-          colima start --memory 4 --disk 60 --vm-type=vz
+          # Try vz first (native Apple Virtualization.framework, faster),
+          # fall back to qemu if vz fails — both can be flaky on CI runners.
+          if ! colima start --memory 4 --disk 60 --vm-type=vz 2>&1; then
+            echo "vz driver failed, falling back to qemu..."
+            colima delete -f 2>/dev/null || true
+            brew install qemu
+            colima start --memory 4 --disk 60 --vm-type=qemu
+          fi
           docker info
 
       - name: Setup Docker (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          # windows-latest runners have Docker CLI but the engine service is stopped.
           Start-Service docker
           docker info
+
+      - name: Get TinyRange version
+        id: package-info
+        run: |
+          echo "tinyrange_version=$(python3 scripts/get_package_version.py --package_name tinyrange)" >> "$GITHUB_OUTPUT"
+
+      - name: Install TinyRange
+        run: |
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            TR_OS="linux-amd64"
+          elif [ "${{ matrix.os }}" = "macos" ]; then
+            TR_OS="darwin-arm64"
+          else
+            TR_OS="windows-amd64"
+          fi
+          curl -o tinyrange.zip -L "https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version }}/tinyrange-${TR_OS}.zip"
+          unzip tinyrange.zip
 
       - name: Build unpacked app
         env:
@@ -129,25 +149,54 @@ jobs:
       - name: Launch app in background
         id: app
         run: |
+          APP_LOG="/tmp/neurodeskapp-stdout.log"
+
           if [ "${{ matrix.os }}" = "linux" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            xvfb-run --auto-servernum dist/linux-unpacked/neurodeskapp \
-              --working-dir "$WORKING_DIR" --log-level debug &
-            APP_PID=$!
+            APP_BIN="dist/linux-unpacked/neurodeskapp"
           elif [ "${{ matrix.os }}" = "macos" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            dist/mac-arm64/NeurodeskApp.app/Contents/MacOS/NeurodeskApp \
-              --working-dir "$WORKING_DIR" --log-level debug &
-            APP_PID=$!
+            APP_BIN="dist/mac-arm64/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
           else
             WORKING_DIR="$TEMP/neurodesk-test"
-            dist/win-unpacked/NeurodeskApp.exe \
-              --working-dir "$WORKING_DIR" --log-level debug &
+            APP_BIN="dist/win-unpacked/NeurodeskApp.exe"
+            APP_LOG="$TEMP/neurodeskapp-stdout.log"
+          fi
+
+          # Verify binary exists
+          if [ ! -f "$APP_BIN" ]; then
+            echo "FAIL: App binary not found at $APP_BIN"
+            echo "=== dist/ contents ==="
+            ls -la dist/ 2>/dev/null || echo "dist/ does not exist"
+            ls -la dist/*/ 2>/dev/null || true
+            exit 1
+          fi
+
+          # Launch with stdout/stderr captured for diagnostics
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            xvfb-run --auto-servernum "$APP_BIN" \
+              --working-dir "$WORKING_DIR" --log-level debug \
+              > "$APP_LOG" 2>&1 &
             APP_PID=$!
+          else
+            "$APP_BIN" \
+              --working-dir "$WORKING_DIR" --log-level debug \
+              > "$APP_LOG" 2>&1 &
+            APP_PID=$!
+          fi
+
+          # Brief wait then check it didn't crash immediately
+          sleep 5
+          if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo "FAIL: App exited within 5 seconds of launch"
+            echo "=== App stdout/stderr ==="
+            cat "$APP_LOG" 2>/dev/null || true
+            exit 1
           fi
 
           echo "pid=$APP_PID" >> "$GITHUB_OUTPUT"
           echo "working_dir=$WORKING_DIR" >> "$GITHUB_OUTPUT"
+          echo "app_log=$APP_LOG" >> "$GITHUB_OUTPUT"
           echo "Launched app with PID $APP_PID, engine=${{ matrix.engine }}, working dir: $WORKING_DIR"
 
       # ───────────────────────────────────────────────
@@ -677,6 +726,14 @@ jobs:
         run: |
           APP_PID=${{ steps.app.outputs.pid }}
           ENGINE="${{ matrix.engine }}"
+
+          echo "=== App stdout/stderr ==="
+          APP_LOG="${{ steps.app.outputs.app_log }}"
+          if [ -n "$APP_LOG" ] && [ -f "$APP_LOG" ]; then
+            cat "$APP_LOG" 2>/dev/null || true
+          else
+            echo "No app stdout log found"
+          fi
 
           echo "=== Electron app logs ==="
           if [ "${{ matrix.os }}" = "linux" ]; then
