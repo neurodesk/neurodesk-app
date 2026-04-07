@@ -68,16 +68,11 @@ jobs:
 
       - name: Setup Docker (macOS)
         if: matrix.os == 'macos'
+        uses: docker/setup-docker-action@v4
+        # Optional: Customize resources if your tests are heavy
+        env:
+          LIMA_START_ARGS: --cpus 4 --memory 8
         run: |
-          brew install docker colima
-          # Try vz first (native Apple Virtualization.framework, faster),
-          # fall back to qemu if vz fails — both can be flaky on CI runners.
-          if ! colima start --memory 4 --disk 60 --vm-type=vz 2>&1; then
-            echo "vz driver failed, falling back to qemu..."
-            colima delete -f 2>/dev/null || true
-            brew install qemu
-            colima start --memory 4 --disk 60 --vm-type=qemu
-          fi
           docker info
 
       - name: Setup Docker (Windows)
@@ -153,13 +148,13 @@ jobs:
 
           if [ "${{ matrix.os }}" = "linux" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            APP_BIN="dist/linux-unpacked/neurodeskapp"
+            APP_BIN="dist/linux-64/neurodeskapp"
           elif [ "${{ matrix.os }}" = "macos" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            APP_BIN="dist/mac-arm64/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
+            APP_BIN="dist/mac/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
           else
             WORKING_DIR="$TEMP/neurodesk-test"
-            APP_BIN="dist/win-unpacked/NeurodeskApp.exe"
+            APP_BIN="dist/win/NeurodeskApp.exe"
             APP_LOG="$TEMP/neurodeskapp-stdout.log"
           fi
 
