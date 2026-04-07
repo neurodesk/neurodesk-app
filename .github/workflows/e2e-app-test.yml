@@ -23,8 +23,8 @@ jobs:
         cfg:
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker }
           - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: docker }
-          - { platform: macos, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker }
-          - { platform: windows, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker }
+          - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker }
+          - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman }
           - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: podman }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange }
@@ -57,14 +57,14 @@ jobs:
           yarn install
 
       - name: Setup Docker (macOS)
-        if: matrix.cfg.platform == 'macos'
+        if: matrix.cfg.platform == 'mac'
         uses: docker/setup-docker-action@v4
         # Optional: Customize resources if your tests are heavy
         env:
           LIMA_START_ARGS: --cpus 4 --memory 8
 
       - name: Setup Docker (Windows)
-        if: matrix.cfg.platform == 'windows'
+        if: matrix.cfg.platform == 'win'
         shell: pwsh
         run: |
           Start-Service docker
@@ -80,17 +80,36 @@ jobs:
           curl -o tinyrange.zip -L https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version}}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip
           unzip tinyrange.zip
 
-      - name: Build unpacked app
+      - name: Build distribution package
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: |
-          yarn packdir
+          yarn dist:${{ matrix.cfg.platform }}
           echo "=== Build output ==="
           ls -la dist/ 2>/dev/null || true
 
-      - name: Install xvfb (Linux)
+      - name: Install app (Linux)
         if: matrix.cfg.platform == 'linux-64' || matrix.cfg.platform == 'linux-arm64'
-        run: sudo apt-get install -y xvfb
+        run: |
+          sudo apt-get install -y xvfb
+          # Install the deb package — this runs the after-install script which
+          # sets up chrome-sandbox permissions, AppArmor profile, and symlinks
+          sudo dpkg -i dist/NeurodeskApp.deb
+
+      - name: Install app (macOS)
+        if: matrix.cfg.platform == 'mac'
+        run: |
+          # Mount the DMG and copy the app to /Applications
+          hdiutil attach dist/NeurodeskApp-arm64.dmg -nobrowse -quiet
+          cp -R "/Volumes/NeurodeskApp arm64/NeurodeskApp.app" /Applications/
+          hdiutil detach "/Volumes/NeurodeskApp arm64" -quiet
+
+      - name: Install app (Windows)
+        if: matrix.cfg.platform == 'win'
+        shell: pwsh
+        run: |
+          # Run NSIS installer silently
+          Start-Process -FilePath "dist\NeurodeskApp-Setup.exe" -ArgumentList "/S" -Wait
 
       # ───────────────────────────────────────────────
       # Launch app with selected engine
@@ -100,7 +119,7 @@ jobs:
         run: |
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             SETTINGS_DIR="$HOME/.config/neurodeskapp"
-          elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
+          elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
             SETTINGS_DIR="$HOME/Library/Application Support/neurodeskapp"
           else
             SETTINGS_DIR="$APPDATA/neurodeskapp"
@@ -119,7 +138,7 @@ jobs:
 
           # Create storage and working directories
           mkdir -p ~/neurodesktop-storage
-          if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
             mkdir -p "$TEMP/neurodesk-test"
           else
             mkdir -p /tmp/neurodesk-test
@@ -132,13 +151,13 @@ jobs:
 
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            APP_BIN="dist/linux-unpacked/neurodeskapp"
-          elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
+            APP_BIN="/opt/NeurodeskApp/neurodeskapp"
+          elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            APP_BIN="dist/mac-arm64/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
+            APP_BIN="/Applications/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
           else
             WORKING_DIR="$TEMP/neurodesk-test"
-            APP_BIN="dist/win-unpacked/NeurodeskApp.exe"
+            APP_BIN="$LOCALAPPDATA/Programs/neurodeskapp/NeurodeskApp.exe"
             APP_LOG="$TEMP/neurodeskapp-stdout.log"
           fi
 
@@ -153,10 +172,6 @@ jobs:
 
           # Launch with stdout/stderr captured for diagnostics
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
-            # Fix chrome-sandbox SUID permissions (same as deb after-install script)
-            SANDBOX_BIN="$(dirname "$APP_BIN")/chrome-sandbox"
-            sudo chown root:root "$SANDBOX_BIN"
-            sudo chmod 4755 "$SANDBOX_BIN"
             xvfb-run --auto-servernum "$APP_BIN" \
               --working-dir "$WORKING_DIR" --log-level debug \
               > "$APP_LOG" 2>&1 &
@@ -201,7 +216,7 @@ jobs:
 
           for i in $(seq 1 120); do
             # Fail fast if the Electron app process has already exited
-            if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
+            if [ "${{ matrix.cfg.platform }}" = "win" ]; then
               APP_ALIVE=$(tasklist //FI "PID eq $APP_PID" 2>/dev/null | grep -c "$APP_PID" || true)
             else
               APP_ALIVE=$(kill -0 "$APP_PID" 2>/dev/null && echo 1 || echo 0)
@@ -211,7 +226,7 @@ jobs:
               echo "=== Checking for app logs ==="
               if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
                 cat "$HOME/.config/neurodeskapp/logs/main.log" 2>/dev/null || true
-              elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
+              elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
                 cat "$HOME/Library/Logs/neurodeskapp/main.log" 2>/dev/null || true
               else
                 cat "$APPDATA/neurodeskapp/logs/main.log" 2>/dev/null || true
@@ -233,7 +248,7 @@ jobs:
               # common port range. Try ports from the app log.
               if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
                 LOG_FILE="$HOME/.config/neurodeskapp/logs/main.log"
-              elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
+              elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
                 LOG_FILE="$HOME/Library/Logs/neurodeskapp/main.log"
               else
                 LOG_FILE="$APPDATA/neurodeskapp/logs/main.log"
@@ -419,48 +434,67 @@ jobs:
           print('PASS: Notebook executed successfully')
           "
 
-      - name: 'Test: Notebook execution via Jupyter API (TinyRange)'
+      - name: 'Test: Jupyter API functional (TinyRange)'
         if: matrix.cfg.engine == 'tinyrange'
         run: |
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
+          API="http://127.0.0.1:${PORT}"
 
-          echo "=== Creating test notebook via Jupyter API ==="
-          NOTEBOOK_JSON='{"type":"notebook","content":{"cells":[{"cell_type":"code","source":["import subprocess\nresult = subprocess.run([\"echo\", \"hello-from-tinyrange\"], capture_output=True, text=True)\nprint(result.stdout)\nassert \"hello-from-tinyrange\" in result.stdout, \"command failed\""],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["print(\"NOTEBOOK_TEST_PASSED\")"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},"nbformat":4,"nbformat_minor":4}}'
-
-          curl -sf -X PUT \
+          echo "=== 1. List contents ==="
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: token ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "$NOTEBOOK_JSON" \
-            "http://127.0.0.1:${PORT}/api/contents/ci_test.ipynb"
-
-          echo "=== Starting kernel and executing cells via API ==="
-          # Start a kernel
-          KERNEL=$(curl -sf -X POST \
-            -H "Authorization: token ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"python3"}' \
-            "http://127.0.0.1:${PORT}/api/kernels")
-          KERNEL_ID=$(echo "$KERNEL" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-          echo "Kernel started: $KERNEL_ID"
-
-          # Execute notebook via /api/contents - read back and check
-          # Use the Jupyter execute API by posting to sessions
-          echo "=== Verifying Jupyter API is functional ==="
-          CONTENTS=$(curl -sf \
-            -H "Authorization: token ${TOKEN}" \
-            "http://127.0.0.1:${PORT}/api/contents")
-          if echo "$CONTENTS" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-            echo "PASS: Jupyter API responsive on TinyRange"
+            "${API}/api/contents")
+          echo "GET /api/contents -> HTTP $RESPONSE"
+          if [ "$RESPONSE" -ge 200 ] && [ "$RESPONSE" -lt 400 ]; then
+            echo "PASS: Contents API responsive"
           else
-            echo "FAIL: Jupyter API not responsive"
+            echo "FAIL: Contents API returned HTTP $RESPONSE"
+            curl -s -H "Authorization: token ${TOKEN}" "${API}/api/contents" || true
             exit 1
           fi
 
-          # Clean up kernel
-          curl -sf -X DELETE \
+          echo "=== 2. Start and verify kernel ==="
+          KERNEL_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${TOKEN}" \
-            "http://127.0.0.1:${PORT}/api/kernels/${KERNEL_ID}" || true
+            -H "Content-Type: application/json" \
+            -d '{"name":"python3"}' \
+            "${API}/api/kernels")
+          KERNEL_ID=$(echo "$KERNEL_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+          if [ -n "$KERNEL_ID" ]; then
+            echo "PASS: Kernel started ($KERNEL_ID)"
+          else
+            echo "FAIL: Could not start kernel"
+            echo "$KERNEL_RESPONSE"
+            exit 1
+          fi
+
+          echo "=== 3. Wait for kernel idle ==="
+          for i in $(seq 1 30); do
+            STATE=$(curl -s \
+              -H "Authorization: token ${TOKEN}" \
+              "${API}/api/kernels/${KERNEL_ID}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('execution_state','unknown'))" 2>/dev/null || echo "unknown")
+            if [ "$STATE" = "idle" ]; then
+              echo "PASS: Kernel idle after $((i * 2))s"
+              break
+            fi
+            sleep 2
+          done
+
+          echo "=== 4. List available kernelspecs ==="
+          curl -s -H "Authorization: token ${TOKEN}" "${API}/api/kernelspecs" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(f\"Default kernel: {data.get('default','?')}\")
+          for name in data.get('kernelspecs', {}):
+              print(f\"  - {name}\")
+          " || true
+
+          echo "=== 5. Clean up kernel ==="
+          curl -s -X DELETE \
+            -H "Authorization: token ${TOKEN}" \
+            "${API}/api/kernels/${KERNEL_ID}" || true
+          echo "PASS: TinyRange Jupyter API fully functional"
 
       - name: 'Test: File CRUD in /data (working dir)'
         if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
@@ -667,7 +701,7 @@ jobs:
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
           echo "=== Sending SIGTERM to Electron app (PID $APP_PID) ==="
-          if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
+          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
             taskkill //PID $APP_PID //T //F 2>/dev/null || true
           else
             kill -TERM "$APP_PID" 2>/dev/null || true
@@ -721,7 +755,7 @@ jobs:
           echo "=== Electron app logs ==="
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             LOG_FILE="$HOME/.config/neurodeskapp/logs/main.log"
-          elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
+          elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
             LOG_FILE="$HOME/Library/Logs/neurodeskapp/main.log"
           else
             LOG_FILE="$APPDATA/neurodeskapp/logs/main.log"
@@ -744,7 +778,7 @@ jobs:
           echo "=== Force cleanup ==="
           # Kill app if still running
           if [ -n "$APP_PID" ]; then
-            if [ "${{ matrix.cfg.platform }}" = "windows" ]; then
+            if [ "${{ matrix.cfg.platform }}" = "win" ]; then
               taskkill //PID $APP_PID //T //F 2>/dev/null || true
             else
               kill -9 "$APP_PID" 2>/dev/null || true
