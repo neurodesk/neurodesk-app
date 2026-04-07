@@ -153,6 +153,10 @@ jobs:
 
           # Launch with stdout/stderr captured for diagnostics
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
+            # Fix chrome-sandbox SUID permissions (same as deb after-install script)
+            SANDBOX_BIN="$(dirname "$APP_BIN")/chrome-sandbox"
+            sudo chown root:root "$SANDBOX_BIN"
+            sudo chmod 4755 "$SANDBOX_BIN"
             xvfb-run --auto-servernum "$APP_BIN" \
               --working-dir "$WORKING_DIR" --log-level debug \
               > "$APP_LOG" 2>&1 &
