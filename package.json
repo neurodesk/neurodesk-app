@@ -20,7 +20,7 @@
     "build:all": "yarn clean && yarn build && yarn start",
     "bundle:preload": "webpack --config webpack.preload.js",
     "extract": "node scripts/extract.js",
-    "pack": "yarn build && electron-builder --dir",
+    "packdir": "yarn build && electron-builder --dir",
     "dist": "yarn build && electron-builder",
     "dist:linux-64": "yarn build && electron-builder --linux --publish never",
     "dist:linux-arm64": "yarn build && electron-builder --linux --arm64 --publish never",

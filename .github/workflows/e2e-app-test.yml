@@ -23,7 +23,7 @@ jobs:
         cfg:
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker }
           - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: docker }
-          - { platform: macos, platform_name: macOS, os: macos-latest, tinyrange_os: darwin-arm64, engine: docker }
+          - { platform: macos, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker }
           - { platform: windows, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman }
           - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, engine: podman }
@@ -84,8 +84,9 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: |
-          yarn dist:${{ matrix.cfg.platform }}
-        if: steps.release-exists.outputs.result == 'false'
+          yarn packdir
+          echo "=== Build output ==="
+          ls -la dist/ 2>/dev/null || true
 
       - name: Install xvfb (Linux)
         if: matrix.cfg.platform == 'linux-64' || matrix.cfg.platform == 'linux-arm64'
@@ -131,13 +132,13 @@ jobs:
 
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            APP_BIN="dist/linux-64/neurodeskapp"
+            APP_BIN="dist/linux-unpacked/neurodeskapp"
           elif [ "${{ matrix.cfg.platform }}" = "macos" ]; then
             WORKING_DIR="/tmp/neurodesk-test"
-            APP_BIN="dist/mac/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
+            APP_BIN="dist/mac-arm64/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
           else
             WORKING_DIR="$TEMP/neurodesk-test"
-            APP_BIN="dist/win/NeurodeskApp.exe"
+            APP_BIN="dist/win-unpacked/NeurodeskApp.exe"
             APP_LOG="$TEMP/neurodeskapp-stdout.log"
           fi
 
