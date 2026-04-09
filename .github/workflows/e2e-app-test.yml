@@ -115,7 +115,7 @@ jobs:
         if: matrix.cfg.platform == 'win'
         shell: pwsh
         run: |
-          Start-Process -FilePath "dist\NeurodeskApp-Setup.exe" -ArgumentList "/S" -Wait
+          echo "Using dist/win-unpacked/ directly (no installer needed)"
 
       # ───────────────────────────────────────────────
       # Launch app with selected engine
@@ -163,7 +163,7 @@ jobs:
             APP_BIN="/Applications/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
           else
             WORKING_DIR="$TEMP/neurodesk-test"
-            APP_BIN="$LOCALAPPDATA/Programs/neurodeskapp/NeurodeskApp.exe"
+            APP_BIN="dist/win-unpacked/NeurodeskApp.exe"
             APP_LOG="$TEMP/neurodeskapp-stdout.log"
           fi
 
@@ -436,7 +436,7 @@ jobs:
           # Use Jupyter's built-in module magic (import module; await module.load())
           # which works under papermill and properly integrates with Lmod.
           echo "=== Creating test notebook via Jupyter API ==="
-          NOTEBOOK_JSON='{"type":"notebook","content":{"cells":[{"cell_type":"code","source":["import module\nawait module.load(\"fsl/'"${FSL_VERSION}"'\")\nawait module.list()"],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["import subprocess\nresult = subprocess.run([\"bet\"], capture_output=True, text=True)\nprint(result.stderr[:200])\nassert \"bet\" in result.stderr.lower() or \"usage\" in result.stderr.lower(), f\"bet did not produce expected output: {result.stderr[:200]}\""],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["print(\"NOTEBOOK_TEST_PASSED\")"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},"nbformat":4,"nbformat_minor":4}}'
+          NOTEBOOK_JSON='{"type":"notebook","content":{"cells":[{"cell_type":"code","source":["import module\nawait module.load(\"fsl/'"${FSL_VERSION}"'\")\nawait module.list()"],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["import subprocess\nresult = subprocess.run([\"bet\"], capture_output=True, text=True)\nprint(result.stdout[:200])\nassert \"bet\" in result.stdout.lower() or \"usage\" in result.stdout.lower(), f\"bet did not produce expected output: {result.stdout[:200]}\""],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["print(\"NOTEBOOK_TEST_PASSED\")"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},"nbformat":4,"nbformat_minor":4}}'
 
           curl -sf -X PUT \
             -H "Authorization: token ${TOKEN}" \
