@@ -1,9 +1,8 @@
 name: E2E App Test
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 6 * * 1' # Weekly Monday 6 AM UTC
+  workflow_call: # Called from publish.yml after build artifacts are ready
+  workflow_dispatch: # Manual trigger (will build from source)
 
 # All tests run against a container launched by the actual Electron app.
 # This ensures the docker flags, volume mounts, token format, and launch
@@ -21,11 +20,11 @@ jobs:
       fail-fast: false
       matrix:
         cfg:
-          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker }
-          - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker }
-          - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker }
-          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman }
-          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange }
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker, artifact: NeurodeskApp-debian-installer-x64 }
+          - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker, artifact: NeurodeskApp-mac-installer-arm64 }
+          - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker, artifact: NeurodeskApp-windows-installer }
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman, artifact: NeurodeskApp-debian-installer-x64 }
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange, artifact: NeurodeskApp-debian-installer-x64 }
 
     runs-on: ${{ matrix.cfg.os }}
     timeout-minutes: 45
@@ -42,21 +41,52 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Try to download pre-built artifact from the calling workflow.
+      # If this was triggered via workflow_dispatch (no artifacts), fall back to building.
+      - name: Download installer artifact
+        id: download
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ${{ matrix.cfg.artifact }}
+          path: dist/
+
+      # Fallback: build from source when no artifact is available (workflow_dispatch)
       - name: Install node
+        if: steps.download.outcome == 'failure'
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
           cache: 'yarn'
 
-      - name: Install dependencies
+      - name: Install dependencies (fallback build)
+        if: steps.download.outcome == 'failure'
         run: |
           npm install --global yarn --prefer-offline
           yarn install
 
+      - name: Get TinyRange version (fallback build)
+        if: steps.download.outcome == 'failure'
+        id: package-info
+        run: |
+          echo "tinyrange_version=$(python3 scripts/get_package_version.py --package_name tinyrange)" >> "$GITHUB_OUTPUT"
+
+      - name: Install TinyRange (fallback build)
+        if: steps.download.outcome == 'failure'
+        run: |
+          curl -o tinyrange.zip -L https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version}}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip
+          unzip tinyrange.zip
+
+      - name: Build distribution package (fallback build)
+        if: steps.download.outcome == 'failure'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          yarn dist:${{ matrix.cfg.platform }}
+
       - name: Setup Docker (macOS)
         if: matrix.cfg.platform == 'mac'
         uses: docker/setup-docker-action@v4
-        # Optional: Customize resources if your tests are heavy
         env:
           LIMA_START_ARGS: --cpus 4 --memory 8
 
@@ -67,38 +97,16 @@ jobs:
           Start-Service docker
           docker info
 
-      - name: Get TinyRange version
-        id: package-info
-        run: |
-          echo "tinyrange_version=$(python3 scripts/get_package_version.py --package_name tinyrange)" >> "$GITHUB_OUTPUT"
-
-      - name: Install TinyRange
-        run: |
-          curl -o tinyrange.zip -L https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version}}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip
-          unzip tinyrange.zip
-
-      - name: Build distribution package
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: |
-          yarn dist:${{ matrix.cfg.platform }}
-          echo "=== Build output ==="
-          ls -la dist/ 2>/dev/null || true
-
       - name: Install app (Linux)
         if: matrix.cfg.platform == 'linux-64' || matrix.cfg.platform == 'linux-arm64'
         run: |
           sudo apt-get install -y xvfb
-          # Install the deb package — this runs the after-install script which
-          # sets up chrome-sandbox permissions, AppArmor profile, and symlinks.
-          # Use dpkg then apt-get -f to resolve dependencies (libnotify4, libsecret-1-0, etc.)
           sudo dpkg -i dist/NeurodeskApp.deb || true
           sudo apt-get install -y -f
 
       - name: Install app (macOS)
         if: matrix.cfg.platform == 'mac'
         run: |
-          # Mount the DMG and copy the app to /Applications
           hdiutil attach dist/NeurodeskApp-arm64.dmg -nobrowse -quiet
           cp -R "/Volumes/NeurodeskApp arm64/NeurodeskApp.app" /Applications/
           hdiutil detach "/Volumes/NeurodeskApp arm64" -quiet
@@ -107,7 +115,6 @@ jobs:
         if: matrix.cfg.platform == 'win'
         shell: pwsh
         run: |
-          # Run NSIS installer silently
           Start-Process -FilePath "dist\NeurodeskApp-Setup.exe" -ArgumentList "/S" -Wait
 
       # ───────────────────────────────────────────────
@@ -374,21 +381,44 @@ jobs:
 
       - name: 'Test: Terminal - module load + FSL bet'
         if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
+        id: fsl_version
         run: |
           ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
-          echo "=== Loading FSL module via terminal ($ENGINE exec) ==="
-          OUTPUT=$($ENGINE exec "$CONTAINER_NAME" bash -c '
+          echo "=== Discovering available FSL version ==="
+          FSL_VERSION=$($ENGINE exec "$CONTAINER_NAME" bash -c '
             source /etc/profile
-            module load fsl/6.0.7.16
-            bet 2>&1 | head -5
+            module --ignore_cache spider fsl 2>&1 | grep -oP "fsl/\K[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?" | tail -1
           ')
+          if [ -z "$FSL_VERSION" ]; then
+            echo "FAIL: No FSL module found in container"
+            $ENGINE exec "$CONTAINER_NAME" bash -c 'source /etc/profile && module --ignore_cache avail 2>&1' || true
+            exit 1
+          fi
+          echo "Found FSL version: $FSL_VERSION"
+          echo "fsl_version=$FSL_VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "=== Loading FSL module via terminal ($ENGINE exec) ==="
+          OUTPUT=$($ENGINE exec "$CONTAINER_NAME" bash -c "
+            source /etc/profile
+            module --ignore_cache load fsl/${FSL_VERSION} 2>&1
+            if ! command -v bet >/dev/null 2>&1; then
+              echo 'MODULE_LOAD_FAILED: bet not on PATH after module load'
+              exit 1
+            fi
+            bet 2>&1 | head -5
+          ")
           echo "$OUTPUT"
-          if echo "$OUTPUT" | grep -qi "usage\|bet"; then
+          if echo "$OUTPUT" | grep -q "MODULE_LOAD_FAILED"; then
+            echo "FAIL: module load did not put bet on PATH"
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qi "usage"; then
             echo "PASS: Terminal module load + tool use"
           else
-            echo "FAIL: bet output did not contain expected text"
+            echo "FAIL: bet output did not contain expected usage text"
+            echo "Full output: $OUTPUT"
             exit 1
           fi
 
@@ -399,9 +429,12 @@ jobs:
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
           CONTAINER_NAME=${{ steps.container.outputs.container }}
+          FSL_VERSION=${{ steps.fsl_version.outputs.fsl_version }}
 
+          # Use Jupyter's built-in module magic (import module; await module.load())
+          # which works under papermill and properly integrates with Lmod.
           echo "=== Creating test notebook via Jupyter API ==="
-          NOTEBOOK_JSON='{"type":"notebook","content":{"cells":[{"cell_type":"code","source":["import module\nawait module.load(\"fsl/6.0.7.16\")\nawait module.list()"],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["import subprocess\nresult = subprocess.run([\"bet\"], capture_output=True, text=True)\nprint(result.stderr[:200])\nassert \"bet\" in result.stderr.lower() or \"usage\" in result.stderr.lower(), \"bet command not working\""],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["print(\"NOTEBOOK_TEST_PASSED\")"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},"nbformat":4,"nbformat_minor":4}}'
+          NOTEBOOK_JSON='{"type":"notebook","content":{"cells":[{"cell_type":"code","source":["import module\nawait module.load(\"fsl/'"${FSL_VERSION}"'\")\nawait module.list()"],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["import subprocess\nresult = subprocess.run([\"bet\"], capture_output=True, text=True)\nprint(result.stderr[:200])\nassert \"bet\" in result.stderr.lower() or \"usage\" in result.stderr.lower(), f\"bet did not produce expected output: {result.stderr[:200]}\""],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["print(\"NOTEBOOK_TEST_PASSED\")"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},"nbformat":4,"nbformat_minor":4}}'
 
           curl -sf -X PUT \
             -H "Authorization: token ${TOKEN}" \
