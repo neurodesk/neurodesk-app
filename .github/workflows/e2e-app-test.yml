@@ -388,12 +388,13 @@ jobs:
 
           echo "=== Discovering available FSL version ==="
           FSL_VERSION=$($ENGINE exec "$CONTAINER_NAME" bash -c '
+            export MODULEPATH=/cvmfs/neurodesk.ardc.edu.au/containers/modules
             source /etc/profile
             module --ignore_cache spider fsl 2>&1 | grep -oP "fsl/\K[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?" | tail -1
           ')
           if [ -z "$FSL_VERSION" ]; then
             echo "FAIL: No FSL module found in container"
-            $ENGINE exec "$CONTAINER_NAME" bash -c 'source /etc/profile && module --ignore_cache avail 2>&1' || true
+            $ENGINE exec "$CONTAINER_NAME" bash -c 'export MODULEPATH=/cvmfs/neurodesk.ardc.edu.au/containers/modules && source /etc/profile && module --ignore_cache avail 2>&1' || true
             exit 1
           fi
           echo "Found FSL version: $FSL_VERSION"
@@ -401,6 +402,7 @@ jobs:
 
           echo "=== Loading FSL module via terminal ($ENGINE exec) ==="
           OUTPUT=$($ENGINE exec "$CONTAINER_NAME" bash -c "
+            export MODULEPATH=/cvmfs/neurodesk.ardc.edu.au/containers/modules
             source /etc/profile
             module --ignore_cache load fsl/${FSL_VERSION} 2>&1
             if ! command -v bet >/dev/null 2>&1; then
@@ -444,6 +446,19 @@ jobs:
 
           echo "=== Installing papermill ==="
           $ENGINE exec "$CONTAINER_NAME" pip install -q papermill
+
+          echo "=== Patching kernel.json for MODULEPATH ==="
+          $ENGINE exec "$CONTAINER_NAME" python3 -c "
+          import json
+          kernel_json = '/opt/conda/share/jupyter/kernels/python3/kernel.json'
+          k = json.load(open(kernel_json))
+          k.setdefault('env', {}).update({
+              'MODULEPATH': '/cvmfs/neurodesk.ardc.edu.au/containers/modules',
+              'LMOD_CMD': '/usr/share/lmod/lmod/libexec/lmod'
+          })
+          json.dump(k, open(kernel_json, 'w'), indent=2)
+          print('Kernel patched with MODULEPATH')
+          "
 
           echo "=== Executing notebook with papermill ==="
           $ENGINE exec "$CONTAINER_NAME" papermill ci_test.ipynb ci_test_output.ipynb --no-progress-bar
