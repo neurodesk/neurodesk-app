@@ -86,16 +86,14 @@ jobs:
 
       - name: Setup Docker (macOS)
         if: matrix.cfg.platform == 'mac'
-        uses: docker/setup-docker-action@v4
-        env:
-          LIMA_START_ARGS: --cpus 4 --memory 8
+        continue-on-error: true
+        run: |
+          brew install docker colima coreutils
+          gtimeout 15m colima start
 
       - name: Setup Docker (Windows)
         if: matrix.cfg.platform == 'win'
-        shell: pwsh
-        run: |
-          Start-Service docker
-          docker info
+        uses: docker/setup-docker-action@v4
 
       - name: Install app (Linux)
         if: matrix.cfg.platform == 'linux-64' || matrix.cfg.platform == 'linux-arm64'
