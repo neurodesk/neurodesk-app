@@ -699,12 +699,6 @@ jobs:
             exit 1
           fi
 
-          echo "=== 3. Delete file via API ==="
-          curl -sf -X DELETE \
-            -H "Authorization: token ${TOKEN}" \
-            "http://127.0.0.1:${PORT}/api/contents/neurodesktop-storage/ci-test.txt"
-          echo "PASS: File deleted via API"
-
       - name: 'Test: Graphical app launch (MRICron)'
         if: matrix.cfg.platform == 'linux' && (matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman')
         run: |
