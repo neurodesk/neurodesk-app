@@ -47,10 +47,6 @@ function parseArgs(argv: string[]) {
       'neurodeskapp --working-dir /data/nb test.ipynb sub/test2.ipynb',
       'Launch in /data/nb and open /data/nb/test.ipynb and /data/nb/sub/test2.ipynb'
     )
-    .option('python-path', {
-      describe: 'Python path',
-      type: 'string'
-    })
     .option('working-dir', {
       describe: 'Working directory',
       type: 'string'
@@ -201,6 +197,16 @@ function setApplicationMenu() {
     }
   });
   Menu.setApplicationMenu(menu);
+}
+
+// Ensure SIGTERM/SIGHUP trigger Electron's will-quit flow so that
+// dispose() -> killAllServers() -> docker rm runs before the process exits.
+// Without this, sending kill -TERM to the app leaves the container running.
+for (const sig of ['SIGTERM', 'SIGHUP'] as const) {
+  process.on(sig, () => {
+    console.log(`Received ${sig}, quitting app…`);
+    app.quit();
+  });
 }
 
 /**
