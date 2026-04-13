@@ -175,7 +175,7 @@ function createLaunchScript(
   if (!serverInfo.overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
-        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chmod 777 /neurodesktop-storage;`
+        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse;`
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
@@ -540,7 +540,7 @@ export class JupyterServer {
     this._stopServer = new Promise<void>((resolve, reject) => {
       if (this._nbServer !== undefined) {
         if (process.platform === 'win32') {
-          if (this._info.engine === EngineType.TinyRange) {
+          if (this._info.engine !== EngineType.TinyRange) {
             execFile(
               `${this._info.engine} rm -f neurodeskapp-${this._info.port}`,
               {
