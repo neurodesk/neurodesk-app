@@ -21,7 +21,7 @@ jobs:
       matrix:
         cfg:
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker, artifact: NeurodeskApp-debian-installer-x64 }
-          - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker, artifact: NeurodeskApp-mac-installer-arm64 }
+          - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: tinyrange, artifact: NeurodeskApp-mac-installer-arm64 }
           - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: tinyrange, artifact: NeurodeskApp-windows-installer }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman, artifact: NeurodeskApp-debian-installer-x64 }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange, artifact: NeurodeskApp-debian-installer-x64 }
@@ -88,17 +88,6 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: |
           yarn dist:${{ matrix.cfg.platform }}
-
-      - name: Setup Docker (macOS)
-        if: matrix.cfg.platform == 'mac' && matrix.cfg.engine == 'docker'
-        continue-on-error: true
-        run: |
-          brew install docker colima coreutils
-          gtimeout 15m colima start
-
-      - name: Setup Docker (Windows)
-        if: matrix.cfg.platform == 'win' && matrix.cfg.engine == 'docker'
-        uses: docker/setup-docker-action@v4
 
       - name: Install app (Linux)
         if: matrix.cfg.platform == 'linux-64' || matrix.cfg.platform == 'linux-arm64'
@@ -754,7 +743,23 @@ jobs:
           if [ "${{ matrix.cfg.platform }}" = "win" ]; then
             taskkill //PID $APP_PID //T //F 2>/dev/null || true
           else
-            kill -TERM "$APP_PID" 2>/dev/null || true
+            # On Linux, $APP_PID may be xvfb-run, not the Electron app.
+            # Resolve the actual neurodeskapp PID.
+            REAL_PID=$(pgrep -f "neurodeskapp.*--working-dir" 2>/dev/null || echo "")
+            if [ -z "$REAL_PID" ]; then
+              # Fallback to the captured PID (macOS, or if pgrep fails)
+              REAL_PID="$APP_PID"
+            fi
+            echo "Resolved Electron PID: $REAL_PID (captured PID was $APP_PID)"
+
+            if kill -0 "$REAL_PID" 2>/dev/null; then
+              kill -TERM "$REAL_PID" || {
+                echo "FAIL: Could not send SIGTERM to app (PID $REAL_PID)"
+                exit 1
+              }
+            else
+              echo "WARN: App process (PID $REAL_PID) is not running — skipping SIGTERM"
+            fi
           fi
 
           echo "=== Waiting for backend to stop ==="
@@ -831,6 +836,11 @@ jobs:
             if [ "${{ matrix.cfg.platform }}" = "win" ]; then
               taskkill //PID $APP_PID //T //F 2>/dev/null || true
             else
+              # Kill the real Electron process and the wrapper
+              REAL_PID=$(pgrep -f "neurodeskapp.*--working-dir" 2>/dev/null || echo "")
+              if [ -n "$REAL_PID" ]; then
+                kill -9 "$REAL_PID" 2>/dev/null || true
+              fi
               kill -9 "$APP_PID" 2>/dev/null || true
             fi
           fi

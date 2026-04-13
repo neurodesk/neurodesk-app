@@ -207,7 +207,13 @@ function createLaunchScript(
   let script: string;
 
   if (isWin) {
-    script = `
+    if (isTinyRange) {
+      script = `
+        setlocal enabledelayedexpansion
+        ${launchCmd}
+      `;
+    } else {
+      script = `
         setlocal enabledelayedexpansion
         SET ERRORCODE=0
         SET IMAGE_EXISTS=
@@ -220,21 +226,27 @@ function createLaunchScript(
         if "%IMAGE_EXISTS%"=="exists" (
             echo "Image exists. Starting container..."
             FOR /F "usebackq delims=" %%i IN (\`${engineType} container inspect -f "{{.State.Status}}" neurodeskapp-${strPort}\`) DO SET CONTAINER_STATUS=%%i
-              ${stopCmd} 
+              ${stopCmd}
               ${volumeCreate}
               ${launchCmd}
         ) else (
             echo "Image does not exist. Start downloading..."
-            ${stopCmd} 
-            ${volumeCreate}            
+            ${stopCmd}
+            ${volumeCreate}
             ${engineType} pull docker.io/${imageRegistry}
             ${launchCmd}
         )
       `;
+    }
   } else {
-    script = `
-        if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then 
-          ${stopCmd} 
+    if (isTinyRange) {
+      script = `
+        ${launchCmd}
+        `;
+    } else {
+      script = `
+        if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
+          ${stopCmd}
           ${volumeCreate}
           ${launchCmd}
         else
@@ -244,6 +256,7 @@ function createLaunchScript(
           ${launchCmd}
         fi
         `;
+    }
   }
 
   const ext = isWin ? 'bat' : 'sh';
