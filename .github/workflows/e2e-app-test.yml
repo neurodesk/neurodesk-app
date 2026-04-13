@@ -119,6 +119,11 @@ jobs:
             'cgroup_manager = "cgroupfs"' \
             'events_logger = "file"' \
             > ~/.config/containers/containers.conf
+
+          # Start D-Bus session bus for slirp4netns port forwarding
+          eval $(dbus-launch --sh-syntax)
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+
           podman info --format '{{.Host.CgroupManager}}'
 
       # ───────────────────────────────────────────────
@@ -754,7 +759,7 @@ jobs:
           else
             # On Linux, $APP_PID may be xvfb-run, not the Electron app.
             # Resolve the actual neurodeskapp PID.
-            REAL_PID=$(pgrep -P "$APP_PID" 2>/dev/null | head -1)
+            REAL_PID=$(pgrep -P "$APP_PID" 2>/dev/null | head -1 || true)
             if [ -z "$REAL_PID" ]; then
               # Fallback to the captured PID (macOS, or if pgrep fails)
               REAL_PID="$APP_PID"
@@ -846,7 +851,7 @@ jobs:
               kill -9 $APP_PID 2>/dev/null || taskkill //PID $APP_PID //T //F 2>/dev/null || true
             else
               # Kill the real Electron process and the wrapper
-              REAL_PID=$(pgrep -P "$APP_PID" 2>/dev/null | head -1)
+              REAL_PID=$(pgrep -P "$APP_PID" 2>/dev/null | head -1 || true)
               if [ -n "$REAL_PID" ]; then
                 kill -9 "$REAL_PID" 2>/dev/null || true
               fi
