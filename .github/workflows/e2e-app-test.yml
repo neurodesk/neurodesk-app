@@ -22,7 +22,7 @@ jobs:
         cfg:
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker, artifact: NeurodeskApp-debian-installer-x64 }
           - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: docker, artifact: NeurodeskApp-mac-installer-arm64 }
-          - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: docker, artifact: NeurodeskApp-windows-installer }
+          - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: tinyrange, artifact: NeurodeskApp-windows-installer }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman, artifact: NeurodeskApp-debian-installer-x64 }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange, artifact: NeurodeskApp-debian-installer-x64 }
 
@@ -74,7 +74,12 @@ jobs:
       - name: Install TinyRange (fallback build)
         if: steps.download.outcome == 'failure'
         run: |
-          curl -o tinyrange.zip -L https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version}}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip
+          TR_VERSION="${{ steps.package-info.outputs.tinyrange_version }}"
+          if [ -z "$TR_VERSION" ]; then
+            echo "FAIL: tinyrange_version is empty — python script may have failed"
+            exit 1
+          fi
+          curl -fSL -o tinyrange.zip "https://github.com/tinyrange/tinyrange/releases/download/v${TR_VERSION}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip"
           unzip tinyrange.zip
 
       - name: Build distribution package (fallback build)
@@ -85,14 +90,14 @@ jobs:
           yarn dist:${{ matrix.cfg.platform }}
 
       - name: Setup Docker (macOS)
-        if: matrix.cfg.platform == 'mac'
+        if: matrix.cfg.platform == 'mac' && matrix.cfg.engine == 'docker'
         continue-on-error: true
         run: |
           brew install docker colima coreutils
           gtimeout 15m colima start
 
       - name: Setup Docker (Windows)
-        if: matrix.cfg.platform == 'win'
+        if: matrix.cfg.platform == 'win' && matrix.cfg.engine == 'docker'
         uses: docker/setup-docker-action@v4
 
       - name: Install app (Linux)
@@ -105,9 +110,9 @@ jobs:
       - name: Install app (macOS)
         if: matrix.cfg.platform == 'mac'
         run: |
-          hdiutil attach dist/NeurodeskApp-arm64.dmg -nobrowse -quiet
-          cp -R "/Volumes/NeurodeskApp arm64/NeurodeskApp.app" /Applications/
-          hdiutil detach "/Volumes/NeurodeskApp arm64" -quiet
+          hdiutil attach dist/NeurodeskApp-arm64.dmg -nobrowse -quiet -mountpoint /Volumes/NeurodeskApp
+          cp -R "/Volumes/NeurodeskApp/NeurodeskApp.app" /Applications/
+          hdiutil detach "/Volumes/NeurodeskApp" -quiet
 
       - name: Install app (Windows)
         if: matrix.cfg.platform == 'win'
@@ -815,7 +820,7 @@ jobs:
           echo "=== Container/VM logs ==="
           if [ "$ENGINE" = "docker" ] || [ "$ENGINE" = "podman" ]; then
             CONTAINER_NAME=${{ steps.container.outputs.container }}
-            if [ -n "$CONTAINER_NAME" ]; then
+            if [ -n "$CONTAINER_NAME" ] && $ENGINE info &>/dev/null; then
               $ENGINE logs "$CONTAINER_NAME" 2>&1 | tail -50 || true
             fi
           fi
@@ -832,10 +837,14 @@ jobs:
 
           # Remove any leftover containers (Docker/Podman)
           if [ "$ENGINE" = "docker" ] || [ "$ENGINE" = "podman" ]; then
-            $ENGINE ps -a --filter "name=neurodeskapp-" --format "{{.Names}}" | while read name; do
-              $ENGINE rm -f "$name" 2>/dev/null || true
-            done
-            $ENGINE volume rm neurodesk-home 2>/dev/null || true
+            if $ENGINE info &>/dev/null; then
+              $ENGINE ps -a --filter "name=neurodeskapp-" --format "{{.Names}}" | while read name; do
+                $ENGINE rm -f "$name" 2>/dev/null || true
+              done
+              $ENGINE volume rm neurodesk-home 2>/dev/null || true
+            else
+              echo "Docker/Podman daemon not available — skipping container cleanup"
+            fi
           fi
 
           # Kill any leftover tinyrange/qemu processes
