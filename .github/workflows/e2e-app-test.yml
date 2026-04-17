@@ -110,6 +110,11 @@ jobs:
         run: |
           echo "Using dist/win-unpacked/ directly (no installer needed)"
 
+      - name: Install websocket client (TinyRange)
+        if: matrix.cfg.engine == 'tinyrange'
+        run: |
+          python3 -m pip install --upgrade --user websocket-client requests
+
       - name: Setup Podman for rootless CI
         if: matrix.cfg.engine == 'podman'
         run: |
@@ -232,9 +237,15 @@ jobs:
 
           for i in $(seq 1 120); do
             # Fail fast if the Electron app process has already exited
-            APP_ALIVE=$(kill -0 "$APP_PID" 2>/dev/null && echo 1 || echo 0)
+            if [ "${{ matrix.cfg.platform }}" = "mac" ]; then
+              APP_ALIVE=$(pgrep -f "NeurodeskApp.app/Contents/MacOS/NeurodeskApp" >/dev/null 2>&1 && echo 1 || echo 0)
+            elif [ "${{ matrix.cfg.platform }}" = "win" ]; then
+              APP_ALIVE=$(tasklist //FI "IMAGENAME eq NeurodeskApp.exe" 2>/dev/null | grep -q NeurodeskApp && echo 1 || echo 0)
+            else
+              APP_ALIVE=$(pgrep -x neurodeskapp >/dev/null 2>&1 && echo 1 || echo 0)
+            fi
             if [ "$APP_ALIVE" = "0" ]; then
-              echo "FAIL: Electron app (PID $APP_PID) exited before backend was ready"
+              echo "FAIL: Electron app exited before backend was ready"
               echo "=== Checking for app logs ==="
               if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
                 cat "$HOME/.config/neurodeskapp/logs/main.log" 2>/dev/null || true
@@ -385,357 +396,27 @@ jobs:
       #  Jupyter API for TinyRange since there's no shell access)
       # ───────────────────────────────────────────────
 
-      - name: 'Test: Terminal - module load + FSL bet'
+      - name: 'Test: Unit tests inside container via pytest (Docker/Podman)'
         if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
-        id: fsl_version
         run: |
           ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
-          echo "=== Discovering available FSL version ==="
-          FSL_VERSION=$($ENGINE exec "$CONTAINER_NAME" bash -c '
-            export MODULEPATH=/cvmfs/neurodesk.ardc.edu.au/containers/modules
-            source /etc/profile
-            module --ignore_cache spider fsl 2>&1 | grep -oP "fsl/\K[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?" | tail -1
-          ')
-          if [ -z "$FSL_VERSION" ]; then
-            echo "FAIL: No FSL module found in container"
-            $ENGINE exec "$CONTAINER_NAME" bash -c 'export MODULEPATH=/cvmfs/neurodesk.ardc.edu.au/containers/modules && source /etc/profile && module --ignore_cache avail 2>&1' || true
-            exit 1
-          fi
-          echo "Found FSL version: $FSL_VERSION"
-          echo "fsl_version=$FSL_VERSION" >> "$GITHUB_OUTPUT"
+          $ENGINE exec -u jovyan "$CONTAINER_NAME" pytest /opt/tests/ -v
+          print('PASS: All unit tests passed')
 
-          echo "=== Loading FSL module via terminal ($ENGINE exec) ==="
-          OUTPUT=$($ENGINE exec "$CONTAINER_NAME" bash -c "
-            export MODULEPATH=/cvmfs/neurodesk.ardc.edu.au/containers/modules
-            source /etc/profile
-            module --ignore_cache load fsl/${FSL_VERSION} 2>&1
-            if ! command -v bet >/dev/null 2>&1; then
-              echo 'MODULE_LOAD_FAILED: bet not on PATH after module load'
-              exit 1
-            fi
-            bet 2>&1 | head -5
-          ")
-          echo "$OUTPUT"
-          if echo "$OUTPUT" | grep -q "MODULE_LOAD_FAILED"; then
-            echo "FAIL: module load did not put bet on PATH"
-            exit 1
-          fi
-          if echo "$OUTPUT" | grep -qi "usage"; then
-            echo "PASS: Terminal module load + tool use"
-          else
-            echo "FAIL: bet output did not contain expected usage text"
-            echo "Full output: $OUTPUT"
-            exit 1
-          fi
-
-      - name: 'Test: Notebook - module load + FSL bet via papermill'
-        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
-        run: |
-          ENGINE="${{ matrix.cfg.engine }}"
-          PORT=${{ steps.container.outputs.port }}
-          TOKEN=${{ steps.container.outputs.token }}
-          CONTAINER_NAME=${{ steps.container.outputs.container }}
-          FSL_VERSION=${{ steps.fsl_version.outputs.fsl_version }}
-
-          # Use Jupyter's built-in module magic (import module; await module.load())
-          # which works under papermill and properly integrates with Lmod.
-          echo "=== Creating test notebook via Jupyter API ==="
-          NOTEBOOK_JSON='{"type":"notebook","content":{"cells":[{"cell_type":"code","source":["import module\nawait module.load(\"fsl/'"${FSL_VERSION}"'\")\nawait module.list()"],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["import subprocess\nresult = subprocess.run([\"bet\"], capture_output=True, text=True)\nprint(result.stdout[:200])\nassert \"bet\" in result.stdout.lower() or \"usage\" in result.stdout.lower(), f\"bet did not produce expected output: {result.stdout[:200]}\""],"metadata":{},"outputs":[],"execution_count":null},{"cell_type":"code","source":["print(\"NOTEBOOK_TEST_PASSED\")"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"}},"nbformat":4,"nbformat_minor":4}}'
-
-          curl -sf -X PUT \
-            -H "Authorization: token ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "$NOTEBOOK_JSON" \
-            "http://127.0.0.1:${PORT}/api/contents/ci_test.ipynb"
-
-          echo "=== Installing papermill ==="
-          $ENGINE exec "$CONTAINER_NAME" pip install -q papermill
-
-          echo "=== Patching kernel.json for MODULEPATH ==="
-          $ENGINE exec "$CONTAINER_NAME" python3 -c "
-          import json
-          kernel_json = '/opt/conda/share/jupyter/kernels/python3/kernel.json'
-          k = json.load(open(kernel_json))
-          k.setdefault('env', {}).update({
-              'MODULEPATH': '/cvmfs/neurodesk.ardc.edu.au/containers/modules',
-              'LMOD_CMD': '/usr/share/lmod/lmod/libexec/lmod'
-          })
-          json.dump(k, open(kernel_json, 'w'), indent=2)
-          print('Kernel patched with MODULEPATH')
-          "
-
-          echo "=== Executing notebook with papermill ==="
-          $ENGINE exec "$CONTAINER_NAME" papermill ci_test.ipynb ci_test_output.ipynb --no-progress-bar
-
-          echo "=== Verifying notebook output ==="
-          $ENGINE exec "$CONTAINER_NAME" python3 -c "
-          import json
-          with open('/home/jovyan/ci_test_output.ipynb') as f:
-              nb = json.load(f)
-          passed = False
-          for cell in nb['cells']:
-              for out in cell.get('outputs', []):
-                  text = ''.join(out.get('text', []))
-                  if 'NOTEBOOK_TEST_PASSED' in text:
-                      passed = True
-                  if 'error' in out.get('output_type', ''):
-                      print('ERROR:', out.get('evalue', ''))
-                      exit(1)
-          assert passed, 'NOTEBOOK_TEST_PASSED not found in output'
-          print('PASS: Notebook executed successfully')
-          "
-
-      - name: 'Test: Jupyter API functional (TinyRange)'
+      - name: 'Test: Pytest suite via Jupyter kernel (TinyRange)'
         if: matrix.cfg.engine == 'tinyrange'
         run: |
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
-          API="http://127.0.0.1:${PORT}"
-
-          echo "=== 1. List contents ==="
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token ${TOKEN}" \
-            "${API}/api/contents")
-          echo "GET /api/contents -> HTTP $RESPONSE"
-          if [ "$RESPONSE" -ge 200 ] && [ "$RESPONSE" -lt 400 ]; then
-            echo "PASS: Contents API responsive"
-          else
-            echo "FAIL: Contents API returned HTTP $RESPONSE"
-            curl -s -H "Authorization: token ${TOKEN}" "${API}/api/contents" || true
-            exit 1
-          fi
-
-          echo "=== 2. Start and verify kernel ==="
-          KERNEL_RESPONSE=$(curl -s -X POST \
-            -H "Authorization: token ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"python3"}' \
-            "${API}/api/kernels")
-          KERNEL_ID=$(echo "$KERNEL_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
-          if [ -n "$KERNEL_ID" ]; then
-            echo "PASS: Kernel started ($KERNEL_ID)"
-          else
-            echo "FAIL: Could not start kernel"
-            echo "$KERNEL_RESPONSE"
-            exit 1
-          fi
-
-          echo "=== 3. Wait for kernel idle ==="
-          for i in $(seq 1 30); do
-            STATE=$(curl -s \
-              -H "Authorization: token ${TOKEN}" \
-              "${API}/api/kernels/${KERNEL_ID}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('execution_state','unknown'))" 2>/dev/null || echo "unknown")
-            if [ "$STATE" = "idle" ]; then
-              echo "PASS: Kernel idle after $((i * 2))s"
-              break
-            fi
-            sleep 2
+          for T in /opt/tests/test_mounts.py /opt/tests/test_fsl.py; do
+            echo "=== Running pytest $T inside TinyRange via Jupyter kernel ==="
+            python3 scripts/jupyter_exec.py \
+              --url "http://127.0.0.1:${PORT}" \
+              --token "$TOKEN" \
+              --pytest "$T"
           done
-
-          echo "=== 4. List available kernelspecs ==="
-          curl -s -H "Authorization: token ${TOKEN}" "${API}/api/kernelspecs" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          print(f\"Default kernel: {data.get('default','?')}\")
-          for name in data.get('kernelspecs', {}):
-              print(f\"  - {name}\")
-          " || true
-
-          echo "=== 5. Clean up kernel ==="
-          curl -s -X DELETE \
-            -H "Authorization: token ${TOKEN}" \
-            "${API}/api/kernels/${KERNEL_ID}" || true
-          echo "PASS: TinyRange Jupyter API fully functional"
-
-      - name: 'Test: File CRUD in /data (working dir)'
-        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
-        run: |
-          ENGINE="${{ matrix.cfg.engine }}"
-          CONTAINER_NAME=${{ steps.container.outputs.container }}
-          WORKING_DIR="${{ steps.app.outputs.working_dir }}"
-
-          echo "=== 1. Create file from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'echo "workdir-mount-ok" > /data/ci-test.txt'
-          if cat "$WORKING_DIR/ci-test.txt" | grep -q "workdir-mount-ok"; then
-            echo "PASS: Create file in /data visible on host"
-          else
-            echo "FAIL: File not visible on host at $WORKING_DIR/ci-test.txt"
-            exit 1
-          fi
-
-          echo "=== 2. Modify file from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'echo "appended-data" >> /data/ci-test.txt'
-          if cat "$WORKING_DIR/ci-test.txt" | grep -q "appended-data"; then
-            echo "PASS: Modified content visible on host"
-          else
-            echo "FAIL: Modified content not visible on host"
-            exit 1
-          fi
-
-          echo "=== 3. Create file from host, read in container ==="
-          echo "host-to-data" > "$WORKING_DIR/ci-host-test.txt"
-          CONTENT=$($ENGINE exec "$CONTAINER_NAME" cat /data/ci-host-test.txt)
-          if echo "$CONTENT" | grep -q "host-to-data"; then
-            echo "PASS: Host-written file readable in container /data"
-          else
-            echo "FAIL: Host-written file not readable in container /data"
-            exit 1
-          fi
-
-          echo "=== 4. Create subdirectory and nested files ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'mkdir -p /data/ci-subdir && echo "nested-data" > /data/ci-subdir/nested.txt'
-          if cat "$WORKING_DIR/ci-subdir/nested.txt" | grep -q "nested-data"; then
-            echo "PASS: Nested directory/file in /data works"
-          else
-            echo "FAIL: Nested file not visible on host"
-            exit 1
-          fi
-
-          echo "=== 5. Remove file from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'rm /data/ci-test.txt'
-          if [ ! -f "$WORKING_DIR/ci-test.txt" ]; then
-            echo "PASS: File removal in /data reflected on host"
-          else
-            echo "FAIL: File still exists on host after container rm"
-            exit 1
-          fi
-
-          echo "=== 6. Remove directory from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'rm -rf /data/ci-subdir'
-          if [ ! -d "$WORKING_DIR/ci-subdir" ]; then
-            echo "PASS: Directory removal in /data reflected on host"
-          else
-            echo "FAIL: Directory still exists on host after container rm"
-            exit 1
-          fi
-
-      - name: 'Test: File CRUD in neurodesk-storage'
-        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
-        run: |
-          ENGINE="${{ matrix.cfg.engine }}"
-          CONTAINER_NAME=${{ steps.container.outputs.container }}
-          STORAGE_DIR="$HOME/neurodesktop-storage"
-
-          echo "=== 1. Create file from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'echo "storage-mount-ok" > /neurodesktop-storage/ci-test.txt'
-          if cat "$STORAGE_DIR/ci-test.txt" | grep -q "storage-mount-ok"; then
-            echo "PASS: Create file in neurodesk-storage visible on host"
-          else
-            echo "FAIL: Could not read neurodesk-storage mount from host"
-            exit 1
-          fi
-
-          echo "=== 2. Modify file from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'echo "modified-content" >> /neurodesktop-storage/ci-test.txt'
-          if cat "$STORAGE_DIR/ci-test.txt" | grep -q "modified-content"; then
-            echo "PASS: Modified content visible on host"
-          else
-            echo "FAIL: Modified content not visible on host"
-            exit 1
-          fi
-
-          echo "=== 3. Create file from host, read in container ==="
-          echo "host-to-storage" > "$STORAGE_DIR/ci-host-test.txt"
-          CONTENT=$($ENGINE exec "$CONTAINER_NAME" cat /neurodesktop-storage/ci-host-test.txt)
-          if echo "$CONTENT" | grep -q "host-to-storage"; then
-            echo "PASS: Host-written file readable in container /neurodesktop-storage"
-          else
-            echo "FAIL: Host-written file not readable in container"
-            exit 1
-          fi
-
-          echo "=== 4. Create subdirectory and nested files ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'mkdir -p /neurodesktop-storage/ci-subdir && echo "nested-storage" > /neurodesktop-storage/ci-subdir/nested.txt'
-          if cat "$STORAGE_DIR/ci-subdir/nested.txt" | grep -q "nested-storage"; then
-            echo "PASS: Nested directory/file in neurodesk-storage works"
-          else
-            echo "FAIL: Nested file not visible on host"
-            exit 1
-          fi
-
-          echo "=== 5. Remove file from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'rm /neurodesktop-storage/ci-test.txt'
-          if [ ! -f "$STORAGE_DIR/ci-test.txt" ]; then
-            echo "PASS: File removal reflected on host"
-          else
-            echo "FAIL: File still exists on host after container rm"
-            exit 1
-          fi
-
-          echo "=== 6. Remove directory from container ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c 'rm -rf /neurodesktop-storage/ci-subdir'
-          if [ ! -d "$STORAGE_DIR/ci-subdir" ]; then
-            echo "PASS: Directory removal reflected on host"
-          else
-            echo "FAIL: Directory still exists on host after container rm"
-            exit 1
-          fi
-
-      - name: 'Test: File CRUD in neurodesk-storage via Jupyter API (TinyRange)'
-        if: matrix.cfg.engine == 'tinyrange'
-        run: |
-          PORT=${{ steps.container.outputs.port }}
-          TOKEN=${{ steps.container.outputs.token }}
-          STORAGE_DIR="$HOME/neurodesktop-storage"
-
-          echo "=== 1. Create file via Jupyter contents API ==="
-          curl -sf -X PUT \
-            -H "Authorization: token ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"type":"file","format":"text","content":"tinyrange-test-ok"}' \
-            "http://127.0.0.1:${PORT}/api/contents/neurodesktop-storage/ci-test.txt"
-
-          echo "=== 2. Read file back via API ==="
-          CONTENT=$(curl -sf \
-            -H "Authorization: token ${TOKEN}" \
-            "http://127.0.0.1:${PORT}/api/contents/neurodesktop-storage/ci-test.txt" | \
-            python3 -c "import sys,json; print(json.load(sys.stdin).get('content',''))")
-          if echo "$CONTENT" | grep -q "tinyrange-test-ok"; then
-            echo "PASS: File created and readable via Jupyter API"
-          else
-            echo "FAIL: File content mismatch: $CONTENT"
-            exit 1
-          fi
-
-      - name: 'Test: Graphical app launch (MRICron)'
-        if: matrix.cfg.platform == 'linux' && (matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman')
-        run: |
-          ENGINE="${{ matrix.cfg.engine }}"
-          CONTAINER_NAME=${{ steps.container.outputs.container }}
-
-          echo "=== Loading MRICron module and verifying launch ==="
-          $ENGINE exec "$CONTAINER_NAME" bash -c '
-            source /etc/profile
-            module load mricron/1.0.20190902
-
-            echo "--- which mricron ---"
-            which mricron || { echo "FAIL: mricron not found"; exit 1; }
-
-            # Start virtual framebuffer and launch mricron briefly
-            export DISPLAY=:99
-            Xvfb :99 -screen 0 1024x768x24 &
-            XVFB_PID=$!
-            sleep 2
-
-            # Launch mricron in background, give it time to start
-            mricron &
-            APP_PID=$!
-            sleep 5
-
-            # Check if the process is still running (did not crash on startup)
-            if kill -0 $APP_PID 2>/dev/null; then
-              echo "PASS: MRICron launched successfully (PID $APP_PID)"
-              kill $APP_PID 2>/dev/null || true
-            else
-              echo "FAIL: MRICron process exited prematurely"
-              kill $XVFB_PID 2>/dev/null || true
-              exit 1
-            fi
-
-            kill $XVFB_PID 2>/dev/null || true
-          '
 
       # ───────────────────────────────────────────────
       # Shutdown test
@@ -743,31 +424,19 @@ jobs:
 
       - name: 'Test: Clean shutdown via app (SIGTERM -> backend stop)'
         run: |
-          APP_PID=${{ steps.app.outputs.pid }}
           ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
-          echo "=== Sending SIGTERM to Electron app (PID $APP_PID) ==="
+          echo "=== Sending SIGTERM to Electron app by process name ==="
           if [ "${{ matrix.cfg.platform }}" = "win" ]; then
-            kill $APP_PID 2>/dev/null || taskkill //PID $APP_PID //T //F 2>/dev/null || true
+            # Graceful termination request by image name (no /F = not forced)
+            taskkill //IM NeurodeskApp.exe //T 2>/dev/null || true
+          elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
+            # Match on full command path since macOS binary name varies
+            pkill -TERM -f "NeurodeskApp.app/Contents/MacOS/NeurodeskApp" || true
           else
-            # On Linux, $APP_PID may be xvfb-run, not the Electron app.
-            # Resolve the actual neurodeskapp PID.
-            REAL_PID=$(pgrep -P "$APP_PID" 2>/dev/null | head -1 || true)
-            if [ -z "$REAL_PID" ]; then
-              # Fallback to the captured PID (macOS, or if pgrep fails)
-              REAL_PID="$APP_PID"
-            fi
-            echo "Resolved Electron PID: $REAL_PID (captured PID was $APP_PID)"
-
-            if kill -0 "$REAL_PID" 2>/dev/null; then
-              kill -TERM "$REAL_PID" || {
-                echo "FAIL: Could not send SIGTERM to app (PID $REAL_PID)"
-                exit 1
-              }
-            else
-              echo "WARN: App process (PID $REAL_PID) is not running — skipping SIGTERM"
-            fi
+            # Exact match on Linux binary name, avoids hitting xvfb-run or Xvfb
+            pkill -TERM -x neurodeskapp || true
           fi
 
           echo "=== Waiting for backend to stop ==="
@@ -804,7 +473,6 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          APP_PID=${{ steps.app.outputs.pid }}
           ENGINE="${{ matrix.cfg.engine }}"
 
           echo "=== App stdout/stderr ==="
@@ -839,18 +507,13 @@ jobs:
           fi
 
           echo "=== Force cleanup ==="
-          # Kill app if still running
-          if [ -n "$APP_PID" ]; then
-            if [ "${{ matrix.cfg.platform }}" = "win" ]; then
-              kill -9 $APP_PID 2>/dev/null || taskkill //PID $APP_PID //T //F 2>/dev/null || true
-            else
-              # Kill the real Electron process and the wrapper
-              REAL_PID=$(pgrep -P "$APP_PID" 2>/dev/null | head -1 || true)
-              if [ -n "$REAL_PID" ]; then
-                kill -9 "$REAL_PID" 2>/dev/null || true
-              fi
-              kill -9 "$APP_PID" 2>/dev/null || true
-            fi
+          # Kill app if still running (by process name, not PID)
+          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
+            taskkill //IM NeurodeskApp.exe //T //F 2>/dev/null || true
+          elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
+            pkill -9 -f "NeurodeskApp.app/Contents/MacOS/NeurodeskApp" 2>/dev/null || true
+          else
+            pkill -9 -x neurodeskapp 2>/dev/null || true
           fi
 
           # Remove any leftover containers (Docker/Podman)
