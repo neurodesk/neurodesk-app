@@ -424,7 +424,7 @@ jobs:
       # ───────────────────────────────────────────────
 
       - name: 'Test: Clean shutdown via app (SIGTERM -> backend stop)'
-        if: steps.container_startup_step.outcome == 'success'
+        if: always() && steps.container_startup_step.outcome == 'success'
         run: |
           ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
