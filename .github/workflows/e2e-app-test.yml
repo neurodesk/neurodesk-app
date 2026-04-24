@@ -411,7 +411,7 @@ jobs:
         run: |
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
-          for T in /opt/tests/test_mounts.py /opt/tests/test_fsl.py; do
+          for T in /opt/tests/*; do
             echo "=== Running pytest $T inside TinyRange via Jupyter kernel ==="
             python3 scripts/jupyter_exec.py \
               --url "http://127.0.0.1:${PORT}" \

@@ -7,8 +7,8 @@ no `exec` mechanism is available, but the Jupyter HTTP port is forwarded.
 
 The script:
   1. Creates a python3 kernel via POST /api/kernels.
-  2. Waits for it to reach execution_state == "idle".
-  3. Opens the kernel WebSocket at /api/kernels/<id>/channels.
+  2. Opens the kernel WebSocket at /api/kernels/<id>/channels.
+  3. Waits for execution_state == "idle" via WebSocket iopub (not REST polling).
   4. Sends a single execute_request, streams iopub stdout/stderr to the host.
   5. Captures the SystemExit code (from pytest.main's return value) and returns it.
   6. Best-effort DELETE of the kernel on exit.
@@ -39,18 +39,6 @@ def _make_msg(msg_type, content, session):
     }
 
 
-def _wait_for_idle(url, kernel_id, headers, attempts=60):
-    for _ in range(attempts):
-        r = requests.get(
-            f'{url}/api/kernels/{kernel_id}', headers=headers, timeout=10
-        )
-        r.raise_for_status()
-        if r.json().get('execution_state') == 'idle':
-            return True
-        time.sleep(1)
-    return False
-
-
 def run(url, token, code, timeout=1800):
     headers = {'Authorization': f'token {token}'}
 
@@ -65,18 +53,40 @@ def run(url, token, code, timeout=1800):
     print(f'[jupyter_exec] created kernel {kernel_id}', flush=True)
 
     try:
-        if not _wait_for_idle(url, kernel_id, headers):
-            print(
-                '[jupyter_exec] kernel did not reach idle state',
-                file=sys.stderr
-            )
-            return 1
-
         ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
         ws_url = f'{ws_url}/api/kernels/{kernel_id}/channels?token={token}'
         ws = websocket.create_connection(ws_url, timeout=30)
 
         try:
+            # Wait for kernel to reach idle state via WebSocket iopub
+            deadline = time.time() + 120
+            ws.settimeout(5)
+            while time.time() < deadline:
+                try:
+                    raw = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if not raw:
+                    continue
+                m = json.loads(raw)
+                mtype = m.get('header', {}).get('msg_type')
+                content = m.get('content', {})
+                if (
+                    mtype == 'status'
+                    and content.get('execution_state') == 'idle'
+                ):
+                    print(
+                        '[jupyter_exec] kernel is idle, sending code',
+                        flush=True
+                    )
+                    break
+            else:
+                print(
+                    '[jupyter_exec] kernel did not reach idle state',
+                    file=sys.stderr
+                )
+                return 1
+
             session = uuid.uuid4().hex
             msg = _make_msg(
                 'execute_request',
