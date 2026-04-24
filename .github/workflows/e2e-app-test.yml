@@ -23,7 +23,6 @@ jobs:
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker, artifact: NeurodeskApp-debian-installer-x64 }
           - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: tinyrange, artifact: NeurodeskApp-mac-installer-arm64 }
           - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: tinyrange, artifact: NeurodeskApp-windows-installer }
-          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: podman, artifact: NeurodeskApp-debian-installer-x64 }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange, artifact: NeurodeskApp-debian-installer-x64 }
 
     runs-on: ${{ matrix.cfg.os }}
@@ -258,7 +257,7 @@ jobs:
             fi
 
             if [ "$ENGINE" = "docker" ] || [ "$ENGINE" = "podman" ]; then
-              CONTAINER=$($ENGINE ps --filter "name=neurodeskapp-" --format "{{.Names}}" | head -1)
+              CONTAINER=$($ENGINE ps --filter "name=neurodeskapp" --format "{{.Names}}" | head -1)
               if [ -n "$CONTAINER" ]; then
                 PORT="${CONTAINER##*-}"
                 TOKEN=$($ENGINE inspect "$CONTAINER" --format '{{json .Config.Cmd}}' | grep -oE "jlab:srvr:[a-f0-9]+")
@@ -521,7 +520,7 @@ jobs:
           # Remove any leftover containers (Docker/Podman)
           if [ "$ENGINE" = "docker" ] || [ "$ENGINE" = "podman" ]; then
             if $ENGINE info &>/dev/null; then
-              $ENGINE ps -a --filter "name=neurodeskapp-" --format "{{.Names}}" | while read name; do
+              $ENGINE ps -a --filter "name=neurodeskapp" --format "{{.Names}}" | while read name; do
                 $ENGINE rm -f "$name" 2>/dev/null || true
               done
               $ENGINE volume rm neurodesk-home 2>/dev/null || true
