@@ -7,7 +7,6 @@ import * as semver from 'semver';
 import log from 'electron-log';
 import { AddressInfo, createServer, Socket } from 'net';
 import { app, nativeTheme } from 'electron';
-import { IPythonEnvironment } from './tokens';
 import { spawn } from 'child_process';
 
 export const DarkThemeBGColor = '#212121';
@@ -53,17 +52,6 @@ export function getSchemasDir(): string {
   return path.normalize(path.join(getAppDir(), './build/schemas'));
 }
 
-export function getEnvironmentPath(environment: IPythonEnvironment): string {
-  const isWin = process.platform === 'win32';
-  const pythonPath = environment.path;
-  let envPath = path.dirname(pythonPath);
-  if (!isWin) {
-    envPath = path.normalize(path.join(envPath, '../'));
-  }
-
-  return envPath;
-}
-
 export function getBundledPythonInstallDir(): string {
   // this directory path cannot have any spaces since
   // conda constructor cannot install to such paths
@@ -86,28 +74,6 @@ export function getBundledPythonInstallDir(): string {
 // user data dir for<= 3.5.1-1
 export function getOldUserConfigPath() {
   return path.join(getBundledPythonInstallDir(), 'jupyterlab-desktop-data');
-}
-
-export function getBundledPythonEnvPath(): string {
-  const userDataDir = getBundledPythonInstallDir();
-  let envPath = path.join(userDataDir, 'neurodesk _server');
-
-  return envPath;
-}
-
-export function getBundledPythonPath(): string {
-  const platform = process.platform;
-  let envPath = getBundledPythonEnvPath();
-  if (platform !== 'win32') {
-    envPath = path.join(envPath, 'bin');
-  }
-
-  const bundledPythonPath = path.join(
-    envPath,
-    `python${platform === 'win32' ? '.exe' : ''}`
-  );
-
-  return bundledPythonPath;
 }
 
 export function isDarkTheme(themeType: string) {

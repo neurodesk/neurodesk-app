@@ -11,21 +11,11 @@ import {
   shell
 } from 'electron';
 import log from 'electron-log';
-import { IRegistry, Registry } from './registry';
 import fetch from 'node-fetch';
 import * as yaml from 'js-yaml';
 import * as semver from 'semver';
 import * as fs from 'fs';
-import {
-  clearSession,
-  customRelaunch,
-  getAppDir,
-  getBundledPythonEnvPath,
-  getBundledPythonPath,
-  isDarkTheme,
-  waitForDuration
-} from './utils';
-import { execFile } from 'child_process';
+import { clearSession, customRelaunch, isDarkTheme } from './utils';
 import { IServerFactory, JupyterServerFactory } from './server';
 import { connectAndGetServerInfo, IJupyterServerInfo } from './connect';
 import { UpdateDialog } from './updatedialog/updatedialog';
@@ -69,7 +59,6 @@ interface IClearHistoryOptions {
   sessionData: boolean;
   recentRemoteURLs: boolean;
   recentSessions: boolean;
-  userSetPythonEnvs?: boolean;
 }
 
 const minimumWindowSpacing = 15;
@@ -169,7 +158,6 @@ class SessionWindowManager implements IDisposable {
 
     const window = new SessionWindow({
       app: this._options.app,
-      registry: this._options.registry,
       serverFactory: this._options.serverFactory,
       contentView: contentView,
       sessionConfig,
@@ -215,21 +203,18 @@ class SessionWindowManager implements IDisposable {
   }
 
   dispose(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      return Promise.all([
-        this._windows.map(sessionWindow => sessionWindow.dispose())
-      ])
-        .then(() => {
-          resolve();
-        })
-        .catch(error => {
-          console.error(
-            'There was a problem shutting down the application',
-            error
-          );
-          resolve();
-        });
-    });
+    return Promise.all(
+      this._windows.map(sessionWindow => sessionWindow.dispose())
+    )
+      .then(() => {
+        // dispose complete
+      })
+      .catch(error => {
+        console.error(
+          'There was a problem shutting down the application',
+          error
+        );
+      });
   }
 
   private _options: SessionWindowManager.IOptions;
@@ -239,7 +224,6 @@ class SessionWindowManager implements IDisposable {
 namespace SessionWindowManager {
   export interface IOptions {
     app: JupyterApplication;
-    registry: IRegistry;
     serverFactory: IServerFactory;
   }
 }
@@ -263,12 +247,10 @@ export class JupyterApplication implements IApplication, IDisposable {
    */
   constructor(cliArgs: ICLIArguments) {
     this._cliArgs = cliArgs;
-    this._registry = new Registry();
-    this._serverFactory = new JupyterServerFactory(this._registry);
+    this._serverFactory = new JupyterServerFactory();
 
     this._sessionWindowManager = new SessionWindowManager({
       app: this,
-      registry: this._registry,
       serverFactory: this._serverFactory
     });
 
@@ -382,37 +364,34 @@ export class JupyterApplication implements IApplication, IDisposable {
 
     const settings = userSettings;
 
-    const dialog = new SettingsDialog(
-      {
-        isDarkTheme: this._isDarkTheme,
-        engineType: settings.getValue(SettingType.engineType),
-        startupMode: settings.getValue(SettingType.startupMode),
-        cvmfsMode: settings.getValue(SettingType.cvmfsMode),
-        theme: settings.getValue(SettingType.theme),
-        // syncJupyterLabTheme: settings.getValue(SettingType.syncJupyterLabTheme),
-        // showNewsFeed: settings.getValue(SettingType.showNewsFeed),
-        // frontEndMode: settings.getValue(SettingType.frontEndMode),
-        checkForUpdatesAutomatically: settings.getValue(
-          SettingType.checkForUpdatesAutomatically
-        ),
-        installUpdatesAutomatically: settings.getValue(
-          SettingType.installUpdatesAutomatically
-        ),
-        defaultWorkingDirectory: userSettings.getValue(
-          SettingType.defaultWorkingDirectory
-        ),
-        // defaultPythonPath: userSettings.getValue(SettingType.pythonPath),
-        logLevel: userSettings.getValue(SettingType.logLevel),
-        activateTab: activateTab,
-        serverArgs: userSettings.getValue(SettingType.serverArgs),
-        // overrideDefaultServerArgs: userSettings.getValue(
-        //   SettingType.overrideDefaultServerArgs
-        // ),
-        serverEnvVars: userSettings.getValue(SettingType.serverEnvVars),
-        ctrlWBehavior: userSettings.getValue(SettingType.ctrlWBehavior)
-      },
-      this._registry
-    );
+    const dialog = new SettingsDialog({
+      isDarkTheme: this._isDarkTheme,
+      engineType: settings.getValue(SettingType.engineType),
+      startupMode: settings.getValue(SettingType.startupMode),
+      cvmfsMode: settings.getValue(SettingType.cvmfsMode),
+      theme: settings.getValue(SettingType.theme),
+      // syncJupyterLabTheme: settings.getValue(SettingType.syncJupyterLabTheme),
+      // showNewsFeed: settings.getValue(SettingType.showNewsFeed),
+      // frontEndMode: settings.getValue(SettingType.frontEndMode),
+      checkForUpdatesAutomatically: settings.getValue(
+        SettingType.checkForUpdatesAutomatically
+      ),
+      installUpdatesAutomatically: settings.getValue(
+        SettingType.installUpdatesAutomatically
+      ),
+      defaultWorkingDirectory: userSettings.getValue(
+        SettingType.defaultWorkingDirectory
+      ),
+      // defaultPythonPath: userSettings.getValue(SettingType.pythonPath),
+      logLevel: userSettings.getValue(SettingType.logLevel),
+      activateTab: activateTab,
+      serverArgs: userSettings.getValue(SettingType.serverArgs),
+      // overrideDefaultServerArgs: userSettings.getValue(
+      //   SettingType.overrideDefaultServerArgs
+      // ),
+      serverEnvVars: userSettings.getValue(SettingType.serverEnvVars),
+      ctrlWBehavior: userSettings.getValue(SettingType.ctrlWBehavior)
+    });
 
     this._settingsDialog = dialog;
 
@@ -465,10 +444,10 @@ export class JupyterApplication implements IApplication, IDisposable {
     this._disposePromise = new Promise<void>((resolve, reject) => {
       Promise.all([
         this._sessionWindowManager.dispose(),
-        this._serverFactory.dispose(),
-        this._registry.dispose()
+        this._serverFactory.dispose()
       ])
         .then(() => {
+          console.log('Application disposed successfully');
           resolve();
         })
         .catch(error => {
@@ -660,120 +639,6 @@ export class JupyterApplication implements IApplication, IDisposable {
       }
     );
 
-    this._evm.registerEventHandler(
-      EventTypeMain.SelectPythonPath,
-      (event, currentPath) => {
-        if (!currentPath) {
-          currentPath = userSettings.getValue(SettingType.pythonPath);
-          if (currentPath === '') {
-            currentPath = getBundledPythonPath();
-          }
-        }
-
-        dialog
-          .showOpenDialog({
-            properties: ['openFile', 'showHiddenFiles', 'noResolveAliases'],
-            buttonLabel: 'Use Path',
-            defaultPath: currentPath
-          })
-          .then(({ filePaths }) => {
-            if (filePaths.length > 0) {
-              event.sender.send(
-                EventTypeRenderer.CustomPythonPathSelected,
-                filePaths[0]
-              );
-            }
-          });
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.InstallBundledPythonEnv,
-      async event => {
-        event.sender.send(
-          EventTypeRenderer.InstallBundledPythonEnvStatus,
-          'STARTED'
-        );
-        const platform = process.platform;
-        const isWin = platform === 'win32';
-        const appDir = getAppDir();
-        const appVersion = app.getVersion();
-        const installerPath = isWin
-          ? `${appDir}\\env_installer\\JupyterLabDesktopAppServer-${appVersion}-Windows-x86_64.exe`
-          : platform === 'darwin'
-          ? `${appDir}/env_installer/JupyterLabDesktopAppServer-${appVersion}-MacOSX-x86_64.sh`
-          : `${appDir}/env_installer/JupyterLabDesktopAppServer-${appVersion}-Linux-x86_64.sh`;
-        const installPath = getBundledPythonEnvPath();
-
-        if (fs.existsSync(installPath)) {
-          const choice = dialog.showMessageBoxSync({
-            type: 'warning',
-            message: 'Do you want to overwrite?',
-            detail: `Install path (${installPath}) is not empty. Would you like to overwrite it?`,
-            buttons: ['Overwrite', 'Cancel'],
-            defaultId: 1,
-            cancelId: 1
-          });
-
-          if (choice === 0) {
-            // allow dialog to close
-            await waitForDuration(200);
-            fs.rmdirSync(installPath, { recursive: true });
-          } else {
-            event.sender.send(
-              EventTypeRenderer.InstallBundledPythonEnvStatus,
-              'CANCELLED'
-            );
-            return;
-          }
-        }
-
-        const installerProc = execFile(
-          installerPath,
-          ['-b', '-p', installPath],
-          {
-            shell: isWin ? 'cmd.exe' : '/bin/bash',
-            env: {
-              ...process.env
-            }
-          }
-        );
-
-        installerProc.on('exit', (exitCode: number) => {
-          if (exitCode === 0) {
-            event.sender.send(
-              EventTypeRenderer.InstallBundledPythonEnvStatus,
-              'SUCCESS'
-            );
-          } else {
-            const message = `Installer Exit: ${exitCode}`;
-            event.sender.send(
-              EventTypeRenderer.InstallBundledPythonEnvStatus,
-              'FAILURE',
-              message
-            );
-            log.error(new Error(message));
-          }
-        });
-
-        installerProc.on('error', (err: Error) => {
-          event.sender.send(
-            EventTypeRenderer.InstallBundledPythonEnvStatus,
-            'FAILURE',
-            err.message
-          );
-          log.error(err);
-        });
-      }
-    );
-
-    this._evm.registerSyncEventHandler(
-      EventTypeMain.ValidatePythonPath,
-      (event, path) => {
-        return this._registry.validatePythonEnvironmentAtPath(path);
-      }
-    );
-
     this._evm.registerSyncEventHandler(
       EventTypeMain.ValidateRemoteServerUrl,
       (event, url) => {
@@ -786,26 +651,6 @@ export class JupyterApplication implements IApplication, IDisposable {
               resolve({ result: 'invalid', error: error.message });
             });
         });
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.ShowInvalidPythonPathMessage,
-      (event, path) => {
-        const requirements = this._registry.getRequirements();
-        const reqVersions = requirements.map(
-          req => `${req.name} ${req.versionRange.format()}`
-        );
-        const reqList = reqVersions.join(', ');
-        const message = `Failed to find a compatible Python environment at the configured path "${path}". Environment Python package requirements are: ${reqList}.`;
-        dialog.showMessageBox({ message, type: 'error' });
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.SetDefaultPythonPath,
-      (event, path) => {
-        userSettings.setValue(SettingType.pythonPath, path);
       }
     );
 
@@ -916,9 +761,6 @@ export class JupyterApplication implements IApplication, IDisposable {
         if (options.recentRemoteURLs) {
           appData.recentRemoteURLs = [];
         }
-        if (options.userSetPythonEnvs) {
-          this._registry.clearUserSetPythonEnvs();
-        }
         if (options.sessionData || options.recentSessions) {
           appData.recentSessions.forEach(async recentSession => {
             if (
@@ -1000,18 +842,25 @@ export class JupyterApplication implements IApplication, IDisposable {
   }
 
   private _quit(): void {
+    const forceExit = setTimeout(() => {
+      log.warn('Shutdown timed out after 15s, forcing exit');
+      process.exit(1);
+    }, 15000);
+    forceExit.unref();
+
     this.dispose()
       .then(() => {
+        clearTimeout(forceExit);
         process.exit();
       })
       .catch(err => {
+        clearTimeout(forceExit);
         log.error(new Error('JupyterLab could not close successfully'));
         process.exit();
       });
   }
 
   private _cliArgs: ICLIArguments;
-  private _registry: IRegistry;
   private _serverFactory: JupyterServerFactory;
   private _disposePromise: Promise<void>;
   private _sessionWindowManager: SessionWindowManager;

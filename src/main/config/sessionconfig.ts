@@ -22,8 +22,6 @@ export class SessionConfig {
   partition: string = '';
   workingDirectory: string = '';
   filesToOpen: string[] = [];
-  pythonPath: string = '';
-  defaultKernel: string = '';
   lastOpened: Date = new Date();
 
   url: URL;
@@ -33,8 +31,7 @@ export class SessionConfig {
 
   static createLocal(
     workingDirectory?: string,
-    filesToOpen?: string[],
-    pythonPath?: string
+    filesToOpen?: string[]
   ): SessionConfig {
     const sessionConfig = new SessionConfig();
     sessionConfig.workingDirectory =
@@ -43,8 +40,6 @@ export class SessionConfig {
     if (filesToOpen) {
       sessionConfig.setFilesToOpen(filesToOpen);
     }
-    sessionConfig.pythonPath =
-      pythonPath || userSettings.getValue(SettingType.pythonPath);
 
     return sessionConfig;
   }
@@ -106,7 +101,6 @@ export class SessionConfig {
   static createFromArgs(cliArgs: ICLIArguments) {
     let workingDir = cliArgs.workingDir;
     let fileOrFolders: string[] = [];
-    let pythonPath = '';
 
     try {
       let skipFilePaths = false;
@@ -132,41 +126,20 @@ export class SessionConfig {
           }
         }
       }
-
-      if (cliArgs.pythonPath) {
-        pythonPath = path.resolve(cliArgs.cwd, cliArgs.pythonPath as string);
-        if (!fs.existsSync(pythonPath)) {
-          pythonPath = '';
-        }
-      }
     } catch (error) {
       return;
     }
 
-    if (!(workingDir || fileOrFolders.length > 0 || pythonPath)) {
+    if (!(workingDir || fileOrFolders.length > 0)) {
       return;
     }
 
     if (workingDir) {
-      const sessionConfig = SessionConfig.createLocal(
-        workingDir as string,
-        fileOrFolders
-      );
-      if (pythonPath) {
-        sessionConfig.pythonPath = pythonPath;
-      }
-
-      return sessionConfig;
+      return SessionConfig.createLocal(workingDir as string, fileOrFolders);
     } else {
-      const sessionConfig =
-        fileOrFolders.length > 0
-          ? SessionConfig.createLocalForFilesOrFolders(fileOrFolders)
-          : SessionConfig.createLocal();
-      if (pythonPath) {
-        sessionConfig.pythonPath = pythonPath;
-      }
-
-      return sessionConfig;
+      return fileOrFolders.length > 0
+        ? SessionConfig.createLocalForFilesOrFolders(fileOrFolders)
+        : SessionConfig.createLocal();
     }
   }
 

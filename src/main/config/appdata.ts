@@ -4,7 +4,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { clearSession, getUserDataDir } from '../utils';
-import { IEnvironmentType, IPythonEnvironment } from '../tokens';
 import { SessionConfig } from './sessionconfig';
 import { getOldSettings } from './settings';
 import { session as electronSession } from 'electron';
@@ -64,10 +63,6 @@ export class ApplicationData {
     const data = fs.readFileSync(appDataPath);
     const jsonData = JSON.parse(data.toString());
 
-    if ('condaRootPath' in jsonData) {
-      this.condaRootPath = jsonData.condaRootPath;
-    }
-
     this.sessions = [];
     if ('sessions' in jsonData && Array.isArray(jsonData.sessions)) {
       for (const session of jsonData.sessions) {
@@ -111,38 +106,6 @@ export class ApplicationData {
     }
     this._sortRecentItems(this.recentRemoteURLs);
 
-    this.discoveredPythonEnvs = [];
-    if (
-      'discoveredPythonEnvs' in jsonData &&
-      Array.isArray(jsonData.discoveredPythonEnvs)
-    ) {
-      for (const pythonEnv of jsonData.discoveredPythonEnvs) {
-        this.discoveredPythonEnvs.push({
-          name: pythonEnv.name,
-          path: pythonEnv.path,
-          type: pythonEnv.type,
-          versions: { ...pythonEnv.versions },
-          defaultKernel: 'python3'
-        });
-      }
-    }
-
-    this.userSetPythonEnvs = [];
-    if (
-      'userSetPythonEnvs' in jsonData &&
-      Array.isArray(jsonData.userSetPythonEnvs)
-    ) {
-      for (const pythonEnv of jsonData.userSetPythonEnvs) {
-        this.userSetPythonEnvs.push({
-          name: pythonEnv.name,
-          path: pythonEnv.path,
-          type: pythonEnv.type,
-          versions: { ...pythonEnv.versions },
-          defaultKernel: 'python3'
-        });
-      }
-    }
-
     this.newsList = [];
     if ('newsList' in jsonData && Array.isArray(jsonData.newsList)) {
       for (const newsItem of jsonData.newsList) {
@@ -157,18 +120,6 @@ export class ApplicationData {
   private _migrateFromOldSettings() {
     const oldSettings = getOldSettings();
 
-    if (oldSettings.condaRootPath) {
-      this.condaRootPath = oldSettings.condaRootPath;
-    }
-    if (oldSettings.pythonPath) {
-      this.userSetPythonEnvs.push({
-        path: oldSettings.pythonPath,
-        name: 'env',
-        type: IEnvironmentType.Path,
-        versions: {},
-        defaultKernel: 'python3'
-      });
-    }
     if (oldSettings.remoteURL) {
       this.recentRemoteURLs.push({
         url: oldSettings.remoteURL,
@@ -180,10 +131,6 @@ export class ApplicationData {
   save() {
     const appDataPath = this._getAppDataPath();
     const appDataJSON: { [key: string]: any } = {};
-
-    if (this.condaRootPath !== '') {
-      appDataJSON.condaRootPath = this.condaRootPath;
-    }
 
     appDataJSON.sessions = [];
     for (const sessionConfig of this.sessions) {
@@ -212,26 +159,6 @@ export class ApplicationData {
       appDataJSON.recentRemoteURLs.push({
         url: remoteUrl.url,
         date: remoteUrl.date.toISOString()
-      });
-    }
-
-    appDataJSON.discoveredPythonEnvs = [];
-    for (const pythonEnv of this.discoveredPythonEnvs) {
-      appDataJSON.discoveredPythonEnvs.push({
-        name: pythonEnv.name,
-        path: pythonEnv.path,
-        type: pythonEnv.type,
-        versions: { ...pythonEnv.versions }
-      });
-    }
-
-    appDataJSON.userSetPythonEnvs = [];
-    for (const pythonEnv of this.userSetPythonEnvs) {
-      appDataJSON.userSetPythonEnvs.push({
-        name: pythonEnv.name,
-        path: pythonEnv.path,
-        type: pythonEnv.type,
-        versions: { ...pythonEnv.versions }
       });
     }
 
@@ -375,13 +302,9 @@ export class ApplicationData {
   }
 
   newsList: INewsItem[] = [];
-  condaRootPath: string = '';
   sessions: SessionConfig[] = [];
   recentRemoteURLs: IRecentRemoteURL[] = [];
   recentSessions: IRecentSession[] = [];
-
-  discoveredPythonEnvs: IPythonEnvironment[] = [];
-  userSetPythonEnvs: IPythonEnvironment[] = [];
 
   private _recentSessionsChanged = new Signal<this, void>(this);
 }

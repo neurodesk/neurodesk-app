@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as ejs from 'ejs';
 import * as fs from 'fs';
 import { ThemedView } from '../dialog/themedview';
-import { EventTypeMain, EventTypeRenderer } from '../eventtypes';
+import { EventTypeRenderer } from '../eventtypes';
 
 export class ProgressView {
   constructor(options: ProgressView.IOptions) {
@@ -124,29 +124,6 @@ export class ProgressView {
         showProgress(title, detail, showAnimation);
       });
 
-      window.electronAPI.onInstallBundledPythonEnvStatus((status, detail) => {
-        const message = status === 'STARTED' ?
-          'Installing' :
-          status === 'CANCELLED' ?
-          'Installation cancelled!' :
-          status === 'FAILURE' ?
-            'Failed to install!' :
-          status === 'SUCCESS' ? 'Installation succeeded. Restarting now...' : '';
-        let html = \`<div class="message-row">\$\{message\}</div>\`;
-        if (detail) {
-          html += \`<div class="message-row">\$\{detail\}</div>\`;
-        }
-        const showAnimation = status === 'STARTED';
-        
-        showProgress('Python Environment Install', html, showAnimation);
-
-        if (status === 'SUCCESS') {
-          setTimeout(() => {
-            sendMessageToMain('${EventTypeMain.RestartApp}');
-          }, 2000);
-        }
-      });
-      
       </script>
     `;
 

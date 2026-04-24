@@ -24,24 +24,15 @@ import { TitleBarView } from '../titlebarview/titlebarview';
 import {
   clearSession,
   DarkThemeBGColor,
-  getBundledPythonPath,
   getLogFilePath,
   isDarkTheme,
   LightThemeBGColor
 } from '../utils';
 import { IServerFactory, JupyterServer, JupyterServerFactory } from '../server';
-import {
-  IDisposable,
-  IEnvironmentType,
-  IPythonEnvironment,
-  IRect,
-  IVersionContainer
-} from '../tokens';
-import { IRegistry } from '../registry';
+import { IDisposable, IRect, IVersionContainer } from '../tokens';
 import { IApplication } from '../app';
 import { SettingsDialog } from '../settingsdialog/settingsdialog';
 import { RemoteServerSelectDialog } from '../remoteserverselectdialog/remoteserverselectdialog';
-import { PythonEnvironmentSelectPopup } from '../pythonenvselectpopup/pythonenvselectpopup';
 import { ProgressView } from '../progressview/progressview';
 import { appData } from '../config/appdata';
 import { SessionConfig } from '../config/sessionconfig';
@@ -64,18 +55,15 @@ export interface IServerInfo {
     versions?: IVersionContainer;
   };
   workingDirectory?: string;
-  defaultKernel?: string;
   pageConfig?: any;
   error?: string;
 }
 
 const titleBarHeight = 29;
-const defaultEnvSelectPopupHeight = 300;
 
 export class SessionWindow implements IDisposable {
   constructor(options: SessionWindow.IOptions) {
     this._app = options.app;
-    this._registry = options.registry;
     this._serverFactory = options.serverFactory;
     this._contentViewType = options.contentView;
     this._sessionConfig = options.sessionConfig;
@@ -85,20 +73,6 @@ export class SessionWindow implements IDisposable {
     this._engineType = this._wsSettings
       .getValue(SettingType.engineType)
       .toString();
-
-    // if a python path was specified together with working directory,
-    // then set it as workspace setting
-    const savePythonPathToWS =
-      this._sessionConfig?.pythonPath &&
-      this._app.cliArgs &&
-      (this._app.cliArgs.workingDir || this._app.cliArgs._.length > 0);
-
-    if (savePythonPathToWS) {
-      this._wsSettings.setValue(
-        SettingType.pythonPath,
-        this._sessionConfig.pythonPath
-      );
-    }
 
     this._isDarkTheme = isDarkTheme(
       this._wsSettings.getValue(SettingType.theme)
@@ -139,7 +113,6 @@ export class SessionWindow implements IDisposable {
 
     this._registerListeners();
     this._createProgressView();
-    this._createEnvSelectPopup();
   }
 
   get window(): BrowserWindow {
@@ -151,22 +124,6 @@ export class SessionWindow implements IDisposable {
       workingDirectory: this._sessionConfig.resolvedWorkingDirectory
     };
 
-    const pythonPath = this._wsSettings.getValue(SettingType.pythonPath);
-
-    if (pythonPath) {
-      serverOptions.environment = this._registry.getEnvironmentByPath(
-        pythonPath
-      );
-    } else {
-      let option: IPythonEnvironment = {
-        name: 'python',
-        path: 'C:\\',
-        type: IEnvironmentType.Path,
-        versions: {},
-        defaultKernel: 'python3'
-      };
-      serverOptions.environment = option;
-    }
     console.debug('serverOptions ', serverOptions);
 
     const server = await this.serverFactory.createServer(
@@ -178,7 +135,6 @@ export class SessionWindow implements IDisposable {
     const serverInfo = server.server.info;
     this._sessionConfig.token = serverInfo.token;
     this._sessionConfig.url = serverInfo.url;
-    this._sessionConfig.defaultKernel = serverInfo.environment.defaultKernel;
   }
 
   load() {
@@ -212,8 +168,7 @@ export class SessionWindow implements IDisposable {
         // Local Lab session - start it
         this._createSessionForLocal(
           this._sessionConfig.workingDirectory,
-          this._sessionConfig.filesToOpen,
-          this._sessionConfig.pythonPath
+          this._sessionConfig.filesToOpen
         );
       }
     } else {
@@ -282,10 +237,6 @@ export class SessionWindow implements IDisposable {
         this._recentSessionsChangedHandler,
         this
       );
-      this._registry.environmentListUpdated.disconnect(
-        this._onEnvironmentListUpdated,
-        this
-      );
 
       this._disposeSession().then(() => {
         this._disposePromise = null;
@@ -298,7 +249,6 @@ export class SessionWindow implements IDisposable {
 
   private _loadWelcomeView() {
     const welcomeView = new WelcomeView({
-      registry: this._registry,
       isDarkTheme: this._isDarkTheme
     });
     this._window.addBrowserView(welcomeView.view);
@@ -378,7 +328,7 @@ export class SessionWindow implements IDisposable {
         `
       <div class="message-row">Error: ${errorDescription}</div>
         <div class="message-row">
-          <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a> 
+          <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
         </div>
       `,
         false
@@ -386,10 +336,6 @@ export class SessionWindow implements IDisposable {
     });
 
     this._labView = labView;
-
-    this._labView.view.webContents.on('focus', () => {
-      this._hideEnvSelectPopup();
-    });
 
     this.labView.view.webContents.on('page-title-updated', (event, title) => {
       this.titleBarView.setTitle(title);
@@ -433,10 +379,6 @@ export class SessionWindow implements IDisposable {
     return this._serverFactory;
   }
 
-  get registry(): IRegistry {
-    return this._registry;
-  }
-
   private _recentSessionsChangedHandler() {
     if (this._recentSessionRemovalByThis) {
       return;
@@ -447,11 +389,6 @@ export class SessionWindow implements IDisposable {
   private _registerListeners() {
     appData.recentSessionsChanged.connect(
       this._recentSessionsChangedHandler,
-      this
-    );
-
-    this._registry.environmentListUpdated.connect(
-      this._onEnvironmentListUpdated,
       this
     );
 
@@ -679,7 +616,7 @@ export class SessionWindow implements IDisposable {
           return;
         }
 
-        this._createSessionForRecent(sessionIndex, true);
+        this._createSessionForRecent(sessionIndex);
       }
     );
 
@@ -695,77 +632,6 @@ export class SessionWindow implements IDisposable {
         }
 
         this.handleOpenFilesOrFolders(fileOrFolders);
-      }
-    );
-
-    this._evm.registerEventHandler(EventTypeMain.ShowEnvSelectPopup, event => {
-      if (
-        !(
-          event.sender === this._titleBarView?.view?.webContents ||
-          event.sender === this._progressView?.view?.view?.webContents
-        )
-      ) {
-        return;
-      }
-
-      this._showEnvSelectPopup();
-    });
-
-    this._evm.registerEventHandler(EventTypeMain.HideEnvSelectPopup, event => {
-      if (event.sender !== this._envSelectPopup?.view?.view?.webContents) {
-        return;
-      }
-
-      this._hideEnvSelectPopup();
-    });
-
-    this._evm.registerEventHandler(
-      EventTypeMain.SetPythonPath,
-      async (event, path) => {
-        if (event.sender !== this._envSelectPopup?.view?.view?.webContents) {
-          return;
-        }
-
-        this._hideEnvSelectPopup();
-
-        this._showProgressView(
-          'Restarting server using the selected Python enviroment'
-        );
-
-        const env = this._registry.addEnvironment(path);
-
-        if (!env) {
-          this._showProgressView(
-            'Invalid Environment',
-            `<div class="message-row">Error! Python environment at '${path}' is not compatible.</div>
-          <div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowEnvSelectPopup}')">Select another environment</a></div>
-          <div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.HideProgressView}')">Cancel</a></div>`,
-            false
-          );
-
-          return;
-        }
-
-        this._wsSettings.setValue(SettingType.pythonPath, path);
-        this._sessionConfig.pythonPath = path;
-
-        this._disposeSession().then(async () => {
-          try {
-            await this._createServerForSession();
-            this._contentViewType = ContentViewType.Lab;
-            this._updateContentView();
-            this._hideProgressView();
-          } catch (error) {
-            this._setProgress(
-              'Failed to create session',
-              `<div class="message-row">${error}</div>
-            <div class="message-row">
-              <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
-            </div>`,
-              false
-            );
-          }
-        });
       }
     );
 
@@ -863,18 +729,8 @@ export class SessionWindow implements IDisposable {
         if (event.sender !== this._titleBarView?.view?.webContents) {
           return;
         }
-
-        if (type === 'mousedown') {
-          this._hideEnvSelectPopup();
-        }
       }
     );
-  }
-
-  getPythonEnvironment(): IPythonEnvironment {
-    if (this._server?.server) {
-      return this._server?.server.info.environment;
-    }
   }
 
   async getServerInfo(): Promise<IServerInfo> {
@@ -895,15 +751,8 @@ export class SessionWindow implements IDisposable {
         const info = this._server?.server.info;
         const serverInfo: IServerInfo = {
           type: 'local',
-          environment: {
-            name: info.environment.name,
-            path: info.environment.path,
-            versions: info.environment.versions
-          },
           workingDirectory: info.workingDirectory,
-          defaultKernel: info.environment.defaultKernel,
           url: this._sessionConfig.url?.href
-          // persistSessionData: this._sessionConfig.persistSessionData
         };
 
         return serverInfo;
@@ -967,17 +816,12 @@ export class SessionWindow implements IDisposable {
       this._progressView.view.view.setBounds(contentRect);
     }
 
-    this._resizeEnvSelectPopup();
-
     // invalidate to trigger repaint
     // TODO: on linux, electron 22 does not repaint properly after resize
     // check if fixed in newer versions
     setTimeout(() => {
       this._titleBarView.view.webContents.invalidate();
       this.contentView?.webContents.invalidate();
-      if (this._envSelectPopup) {
-        this._envSelectPopup.view.view.webContents.invalidate();
-      }
     }, 200);
   }
 
@@ -1009,79 +853,12 @@ export class SessionWindow implements IDisposable {
 
     this._remoteServerSelectDialog.load();
 
-    // switched them from binderhub to jupyterhub so they don't required the "/v2/gh/neurodesk/neurodesktop/main"
-    this._registry.getRunningServerList().then(runningServers => {
-      runningServers.push('https://play.neurodesk.cloud.edu.au/');
-      runningServers.push('https://play-america.neurodesk.org/');
-      runningServers.push('https://play-europe.neurodesk.org/');
-      this._remoteServerSelectDialog.setRunningServerList(runningServers);
-    });
-  }
-
-  private async _createEnvSelectPopup() {
-    const envs = await this.registry.getEnvironmentList(false);
-    // const defaultEnv = await this._registry.getDefaultEnvironment();
-    const defaultPythonPath = '';
-
-    this._envSelectPopup = new PythonEnvironmentSelectPopup({
-      isDarkTheme: this._isDarkTheme,
-      envs,
-      bundledPythonPath: getBundledPythonPath(),
-      defaultPythonPath
-    });
-
-    this._envSelectPopup.load();
-  }
-
-  private async _showEnvSelectPopup() {
-    if (this._envSelectPopupVisible) {
-      return;
-    }
-
-    let currentPythonPath = this._wsSettings.getValue(SettingType.pythonPath);
-    // if (!currentPythonPath) {
-    //   const defaultEnv = await this.registry.getDefaultEnvironment();
-    //   if (defaultEnv) {
-    //     currentPythonPath = defaultEnv.path;
-    //   }
-    // }
-
-    this._envSelectPopup.setCurrentPythonPath(currentPythonPath);
-
-    this._window.addBrowserView(this._envSelectPopup.view.view);
-    this._envSelectPopupVisible = true;
-    this._resizeEnvSelectPopup();
-    this._envSelectPopup.view.view.webContents.focus();
-  }
-
-  private _resizeEnvSelectPopup() {
-    if (!this._envSelectPopupVisible) {
-      return;
-    }
-
-    const titleBarRect = this._titleBarView.view.getBounds();
-    const popupWidth = 600;
-    const paddingRight = process.platform === 'darwin' ? 33 : 127;
-    // shorten browser view height if larger than max allowed
-    const maxHeight = Math.min(
-      this._envSelectPopup.getScrollHeight(),
-      defaultEnvSelectPopupHeight
-    );
-
-    this._envSelectPopup.view.view.setBounds({
-      x: Math.round(titleBarRect.width - paddingRight - popupWidth),
-      y: Math.round(titleBarRect.height),
-      width: popupWidth,
-      height: Math.round(maxHeight)
-    });
-  }
-
-  private _hideEnvSelectPopup() {
-    if (!this._envSelectPopupVisible) {
-      return;
-    }
-    this._window.removeBrowserView(this._envSelectPopup.view.view);
-    this._envSelectPopupVisible = false;
+    const runningServers: string[] = [
+      'https://play.neurodesk.cloud.edu.au/',
+      'https://play-america.neurodesk.org/',
+      'https://play-europe.neurodesk.org/'
+    ];
+    this._remoteServerSelectDialog.setRunningServerList(runningServers);
   }
 
   async openSession(sessionConfig: SessionConfig) {
@@ -1105,8 +882,7 @@ export class SessionWindow implements IDisposable {
     this._disposeSession().then(() => {
       this._createSessionForLocal(
         sessionConfig.workingDirectory,
-        sessionConfig.filesToOpen,
-        sessionConfig.pythonPath
+        sessionConfig.filesToOpen
       ).catch(error => {
         this._setProgress(
           'Failed to create session',
@@ -1166,9 +942,7 @@ export class SessionWindow implements IDisposable {
   private async _createSessionForLocal(
     workingDirectory?: string,
     filesToOpen?: string[],
-    pythonPath?: string,
-    recentSessionIndex?: number,
-    useDefaultPythonEnv?: boolean
+    recentSessionIndex?: number
   ) {
     const resolvedWorkingDirectory = resolveWorkingDirectory(workingDirectory);
     const sessionConfig = SessionConfig.createLocal(
@@ -1179,40 +953,6 @@ export class SessionWindow implements IDisposable {
     this._showProgressView('Creating new session');
 
     this._wsSettings = new WorkspaceSettings(sessionConfig.workingDirectory);
-
-    if (pythonPath || useDefaultPythonEnv === true) {
-      this._wsSettings.setValue(
-        SettingType.pythonPath,
-        pythonPath ? pythonPath : ''
-      );
-    }
-
-    // pythonPath = this._wsSettings.getValue(SettingType.pythonPath);
-
-    // if (pythonPath) {
-    //   const env = this._registry.addEnvironment(pythonPath);
-
-    //   if (!env) {
-    //     // reset python path to default
-    //     this._wsSettings.setValue(SettingType.pythonPath, '');
-
-    //     this._showProgressView(
-    //       'Invalid Environment configured for project',
-    //       `<div class="message-row">Error! Python environment at '${pythonPath}' is not compatible.</div>
-    //       ${
-    //         recentSessionIndex !== undefined
-    //           ? `<div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.OpenRecentSessionWithDefaultEnv}', ${recentSessionIndex})">Reset to default Python environment</a></div>`
-    //           : ''
-    //       }
-    //       <div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${
-    //         EventTypeMain.HideProgressView
-    //       }')">Cancel</a></div>`,
-    //       false
-    //     );
-
-    //     return;
-    //   }
-    // }
 
     this._sessionConfig = sessionConfig;
     await this._createServerForSession(this._progressView);
@@ -1282,10 +1022,7 @@ export class SessionWindow implements IDisposable {
     }
   }
 
-  private _createSessionForRecent(
-    sessionIndex: number,
-    useDefaultPythonEnv?: boolean
-  ) {
+  private _createSessionForRecent(sessionIndex: number) {
     if (sessionIndex < 0 || sessionIndex >= appData.recentSessions.length) {
       return;
     }
@@ -1328,9 +1065,7 @@ export class SessionWindow implements IDisposable {
       this._createSessionForLocal(
         recentSession.workingDirectory,
         recentSession.filesToOpen,
-        undefined,
-        sessionIndex,
-        useDefaultPythonEnv
+        sessionIndex
       ).catch(error => {
         this._setProgress(
           'Failed to create session',
@@ -1357,15 +1092,9 @@ export class SessionWindow implements IDisposable {
       this._updateContentView();
     };
 
-    this._hideEnvSelectPopup();
-
     this._disposeSession().then(() => {
       showWelcome();
       this._sessionConfigChanged.emit();
-      // keep a free server up
-      // setTimeout(() => {
-      //   this._app.createFreeServersIfNeeded();
-      // }, 200);
     });
   }
 
@@ -1393,13 +1122,6 @@ export class SessionWindow implements IDisposable {
     }
   }
 
-  private _onEnvironmentListUpdated() {
-    // TODO: add ability to update popup's env list
-    // recreate env select popup to have newly added env listed
-    this._hideEnvSelectPopup();
-    this._createEnvSelectPopup();
-  }
-
   private _wsSettings: WorkspaceSettings;
   private _isDarkTheme: boolean;
   private _sessionConfig: SessionConfig | undefined;
@@ -1412,11 +1134,8 @@ export class SessionWindow implements IDisposable {
   private _contentViewType: ContentViewType = ContentViewType.Welcome;
   private _serverFactory: IServerFactory;
   private _app: IApplication;
-  private _registry: IRegistry;
   private _server: JupyterServerFactory.IFactoryItem;
   private _remoteServerSelectDialog: RemoteServerSelectDialog;
-  private _envSelectPopup: PythonEnvironmentSelectPopup;
-  private _envSelectPopupVisible: boolean = false;
   private _disposePromise: Promise<void>;
   private _sessionConfigChanged = new Signal<this, void>(this);
   private _evm = new EventManager();
@@ -1428,7 +1147,6 @@ export namespace SessionWindow {
   export interface IOptions {
     app: IApplication;
     serverFactory: IServerFactory;
-    registry: IRegistry;
     contentView: ContentViewType;
     sessionConfig?: SessionConfig;
     rect?: IRect;

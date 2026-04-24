@@ -250,7 +250,7 @@ export class LabView implements IDisposable {
                 commands.execute('docmanager:open', {
                   path: model.path,
                   factory: 'Notebook',
-                  kernel: { name: '${this._sessionConfig.defaultKernel}' }
+                  kernel: { name: 'python3' }
                 });
               }
             });

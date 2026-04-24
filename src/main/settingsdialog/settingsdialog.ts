@@ -2,9 +2,8 @@
 // Distributed under the terms of the Modified BSD License.
 
 import * as ejs from 'ejs';
-import { app, BrowserWindow } from 'electron';
+import { BrowserWindow } from 'electron';
 import * as path from 'path';
-import * as fs from 'fs';
 import { ThemedWindow } from '../dialog/themedwindow';
 import {
   CtrlWBehavior,
@@ -18,11 +17,8 @@ import {
   StartupMode,
   ThemeType
 } from '../config/settings';
-import { getBundledPythonPath, versionWithoutSuffix } from '../utils';
-import { IRegistry } from '../registry';
-
 export class SettingsDialog {
-  constructor(options: SettingsDialog.IOptions, registry: IRegistry) {
+  constructor(options: SettingsDialog.IOptions) {
     this._window = new ThemedWindow({
       isDarkTheme: options.isDarkTheme,
       title: 'Settings',
@@ -50,40 +46,6 @@ export class SettingsDialog {
     const installUpdatesAutomaticallyEnabled = process.platform === 'darwin';
     const installUpdatesAutomatically =
       installUpdatesAutomaticallyEnabled && options.installUpdatesAutomatically;
-    // let defaultPythonPath = options.defaultPythonPath;
-    const bundledPythonPath = getBundledPythonPath();
-
-    // if (defaultPythonPath === '') {
-    //   defaultPythonPath = bundledPythonPath;
-    // }
-    let bundledEnvInstallationExists = false;
-    try {
-      bundledEnvInstallationExists = fs.existsSync(bundledPythonPath);
-    } catch (error) {
-      console.error('Failed to check for bundled Python path', error);
-    }
-
-    // const selectBundledPythonPath =
-    //   (defaultPythonPath === '' || defaultPythonPath === bundledPythonPath) &&
-    //   bundledEnvInstallationExists;
-
-    let bundledEnvInstallationLatest = true;
-
-    if (bundledEnvInstallationExists) {
-      try {
-        const bundledEnv = registry.getEnvironmentByPath(bundledPythonPath);
-        const jlabVersion = bundledEnv.versions['jupyterlab'];
-        const appVersion = app.getVersion();
-
-        if (
-          versionWithoutSuffix(jlabVersion) !== versionWithoutSuffix(appVersion)
-        ) {
-          bundledEnvInstallationLatest = false;
-        }
-      } catch (error) {
-        console.error('Failed to check bundled environment update', error);
-      }
-    }
 
     let strServerEnvVars = '';
     if (Object.keys(serverEnvVars).length > 0) {
@@ -471,10 +433,6 @@ export class SettingsDialog {
       installUpdatesAutomatically,
       // frontEndMode,
       defaultWorkingDirectory,
-      // defaultPythonPath,
-      // selectBundledPythonPath,
-      // bundledEnvInstallationExists,
-      bundledEnvInstallationLatest,
       logLevel,
       serverArgs,
       // overrideDefaultServerArgs,

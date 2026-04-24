@@ -8,14 +8,9 @@ type ShowProgressListener = (
   detail: string,
   showAnimation: boolean
 ) => void;
-type InstallBundledPythonEnvStatusListener = (
-  status: string,
-  message: string
-) => void;
 
 let onChildProcessListener: ShowChildProcressLogListener;
 let onShowProgressListener: ShowProgressListener;
-let onInstallBundledPythonEnvStatusListener: InstallBundledPythonEnvStatusListener;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getAppConfig: () => {
@@ -34,11 +29,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   sendMessageToMain: (message: string, ...args: any[]) => {
     ipcRenderer.send(message, ...args);
-  },
-  onInstallBundledPythonEnvStatus: (
-    callback: InstallBundledPythonEnvStatusListener
-  ) => {
-    onInstallBundledPythonEnvStatusListener = callback;
   }
 });
 
@@ -53,15 +43,6 @@ ipcRenderer.on(
   (event, title, detail, showAnimation) => {
     if (onShowProgressListener) {
       onShowProgressListener(title, detail, showAnimation);
-    }
-  }
-);
-
-ipcRenderer.on(
-  EventTypeRenderer.InstallBundledPythonEnvStatus,
-  (event, result, message) => {
-    if (onInstallBundledPythonEnvStatusListener) {
-      onInstallBundledPythonEnvStatusListener(result, message);
     }
   }
 );

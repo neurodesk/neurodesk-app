@@ -37,9 +37,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServerInfo: () => {
     return ipcRenderer.invoke(EventTypeMain.GetServerInfo);
   },
-  showEnvSelectPopup: () => {
-    ipcRenderer.send(EventTypeMain.ShowEnvSelectPopup);
-  },
   sendMouseEvent: (type: string, params: any) => {
     ipcRenderer.send(EventTypeMain.TitleBarMouseEvent, type, params);
   },

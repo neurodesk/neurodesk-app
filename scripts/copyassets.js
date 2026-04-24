@@ -77,9 +77,6 @@ function copyAssests() {
     path.join(dest, '../jupyter-ui-toolkit/toolkit.js')
   );
 
-  const envInfoPath = path.join('main', 'env_info.py');
-  fs.copySync(path.join(srcDir, envInfoPath), path.join(dest, envInfoPath));
-
   // Copy install scripts
   if (platform === 'darwin') {
     fs.copySync(

@@ -57,7 +57,6 @@ export enum SettingType {
   showNewsFeed = 'showNewsFeed',
   cvmfsMode = 'cvmfsMode',
   defaultWorkingDirectory = 'defaultWorkingDirectory',
-  pythonPath = 'pythonPath',
   serverArgs = 'serverArgs',
   overrideDefaultServerArgs = 'overrideDefaultServerArgs',
   serverEnvVars = 'serverEnvVars',
@@ -143,7 +142,6 @@ export class UserSettings {
       syncJupyterLabTheme: new Setting<boolean>(true),
 
       defaultWorkingDirectory: new Setting<string>(''),
-      pythonPath: new Setting<string>('', { wsOverridable: true }),
       serverArgs: new Setting<string>('', { wsOverridable: true }),
       overrideDefaultServerArgs: new Setting<boolean>(false, {
         wsOverridable: true
@@ -198,10 +196,6 @@ export class UserSettings {
     if (SettingType.installUpdatesAutomatically in oldSettings) {
       this._settings[SettingType.installUpdatesAutomatically].value =
         oldSettings[SettingType.installUpdatesAutomatically];
-    }
-    if (SettingType.pythonPath in oldSettings) {
-      this._settings[SettingType.pythonPath].value =
-        oldSettings[SettingType.pythonPath];
     }
   }
 

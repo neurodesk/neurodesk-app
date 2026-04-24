@@ -12,16 +12,11 @@ type SetNotificationMessageListener = (
   closable: boolean
 ) => void;
 type DisableLocalServerActionsListener = () => void;
-type InstallBundledPythonEnvStatusListener = (
-  status: string,
-  message: string
-) => void;
 
 let onSetRecentSessionListListener: SetRecentSessionListListener;
 let onSetNewsListListener: SetNewsListListener;
 let onSetNotificationMessageListener: SetNotificationMessageListener;
 let onDisableLocalServerActionsListener: DisableLocalServerActionsListener;
-let onInstallBundledPythonEnvStatusListener: InstallBundledPythonEnvStatusListener;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getAppConfig: () => {
@@ -75,11 +70,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     callback: DisableLocalServerActionsListener
   ) => {
     onDisableLocalServerActionsListener = callback;
-  },
-  onInstallBundledPythonEnvStatus: (
-    callback: InstallBundledPythonEnvStatusListener
-  ) => {
-    onInstallBundledPythonEnvStatusListener = callback;
   }
 });
 
@@ -112,14 +102,5 @@ ipcRenderer.on(EventTypeRenderer.DisableLocalServerActions, event => {
     onDisableLocalServerActionsListener();
   }
 });
-
-ipcRenderer.on(
-  EventTypeRenderer.InstallBundledPythonEnvStatus,
-  (event, result, message) => {
-    if (onInstallBundledPythonEnvStatusListener) {
-      onInstallBundledPythonEnvStatusListener(result, message);
-    }
-  }
-);
 
 export {};

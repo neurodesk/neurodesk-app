@@ -6,7 +6,6 @@ import { DarkThemeBGColor, getUserHomeDir, LightThemeBGColor } from '../utils';
 import * as path from 'path';
 import * as fs from 'fs';
 import { appData } from '../config/appdata';
-import { IRegistry } from '../registry';
 import { EventTypeRenderer } from '../eventtypes';
 
 const maxRecentItems = 5;
@@ -487,26 +486,6 @@ export class WelcomeView {
             showNotificationPanel(message, closable);
           });
 
-          window.electronAPI.onInstallBundledPythonEnvStatus((status, detail) => {
-            let message = status === 'STARTED' ?
-              'Installing Python environment...' :
-              status === 'CANCELLED' ?
-              'Installation cancelled!' :
-              status === 'FAILURE' ?
-                'Failed to install!' :
-              status === 'SUCCESS' ? 'Installation succeeded. Restarting now...' : '';
-            if (detail) {
-              message += \`[\$\{detail\}]\`;
-            }
-
-            showNotificationPanel(message, status === 'CANCELLED' || status === 'FAILURE');
-    
-            if (status === 'SUCCESS') {
-              setTimeout(() => {
-                sendMessageToMain('restart-app');
-              }, 2000);
-            }
-          });
           </script>
         </body>
       </html>
@@ -618,13 +597,11 @@ export class WelcomeView {
   private _isDarkTheme: boolean;
   private _view: BrowserView;
   private _viewReady: Promise<void>;
-  // private _registry: IRegistry;
   private _pageSource: string;
 }
 
 export namespace WelcomeView {
   export interface IOptions {
     isDarkTheme: boolean;
-    registry: IRegistry;
   }
 }
