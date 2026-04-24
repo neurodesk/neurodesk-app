@@ -47,6 +47,7 @@ function createLaunchScript(
 ): string {
   const isWin = process.platform === 'win32';
   const strPort = port.toString();
+  const containerJupyterPort = '8888';
   const config = Config.loadConfig(path.join(__dirname, '..'));
   const tag = config.ConfigToml.jupyter_neurodesk_version;
   let imageRegistry = `vnmd/neurodesktop:${tag}`;
@@ -109,9 +110,11 @@ function createLaunchScript(
     `--privileged`,
     `--user=root`,
     `--name neurodeskapp-${strPort}`,
-    `-p ${strPort}:${strPort}`,
+    `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
     `-e NEURODESKTOP_VERSION=${tag}`,
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
+    `-e GRANT_SUDO=yes`,
+    `-e OLLAMA_HOST="http://host.docker.internal:11434"`,
     isWin
       ? `-v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
@@ -137,7 +140,7 @@ function createLaunchScript(
       ...commonLaunchArgs,
       isPodman
         ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
-        : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
+        : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6 --add-host=host.docker.internal:host-gateway`,
       parseInt(osVersion) >= 2310 && isDocker // use apparmor profile for ubuntu>=23.10
         ? '--security-opt apparmor=neurodeskapp'
         : ''
@@ -179,7 +182,11 @@ function createLaunchScript(
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
-      launchArgs.push(arg.replace('{token}', token).replace('{port}', strPort));
+      launchArgs.push(
+        arg
+          .replace('{token}', token)
+          .replace('{port}', isTinyRange ? strPort : containerJupyterPort)
+      );
     }
     launchArgs.push(isTinyRange ? '"' : '');
   }
@@ -472,6 +479,13 @@ export class JupyterServer {
           console.log(
             'child process exited with ' + `code ${code} and signal ${signal}`
           );
+          if (
+            _code === 0 &&
+            !started &&
+            this._info.engine !== EngineType.TinyRange
+          ) {
+            return;
+          }
           if (_code === 0 || started) {
             /* On Windows, JupyterLab server sometimes crashes randomly during websocket
               connection. As a result of this, users experience kernel connections failures.
