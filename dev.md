@@ -85,4 +85,4 @@ Some website to handle the conversion:
 
 ## Container naming decision
 
-When spinning up a neurodesktop container, we name it `neurodeskapp-${strPort}` to avoid conflict with `neurodesktop` as in the website's instruction to run container and in case the app crashes and fails to remove the container correctly. However, a user reported issue losing their chat to Cursor IDE upon new launch because the container is renamed when it restarts. To keep it convenient for AI chat to be connected, we now set it consistently as `neurodeskapp` as users cannot create multiple instances. 
+When spinning up a neurodesktop container, we name it `neurodeskapp-${strPort}` to avoid conflict with `neurodesktop` as in the website's instruction to run container and in case the app crashes and fails to remove the container correctly. However, a user reported issue losing their chat to Cursor IDE upon new launch because the container is renamed when it restarts. To keep it convenient for AI chat to be connected, we now set it consistently as `neurodeskapp` as users cannot create multiple instances.
