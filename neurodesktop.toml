@@ -6,7 +6,7 @@
 # To use, add the respective shortcodes to markdown
 # e.g. {{< params/neurodesktop/jupyter_neurodesk_version >}}
 
-jupyter_neurodesk_version = "2025-12-20"
+jupyter_neurodesk_version = "2026-04-21"
 
 rdpport="-p 3390:3389"
 vncport="-p 5901:5901"
@@ -16,6 +16,8 @@ vncflag="--vnc"
 base="""sudo docker run \\
   --shm-size=1gb -it --privileged --user=root --name neurodesktop \\
   -v ~/neurodesktop-storage:/neurodesktop-storage \\
+  --add-host=host.docker.internal:host-gateway \\
+  -e OLLAMA_HOST="http://host.docker.internal:11434" \\
   -e NB_UID="$(id -u)" -e NB_GID="$(id -g)" \\
   -p 8888:8888"""
 
@@ -23,4 +25,6 @@ base="""sudo docker run \\
 base="""docker run \
 --shm-size=1gb -it --privileged --user=root --name neurodesktop \
 -v C:/neurodesktop-storage:/neurodesktop-storage \
+--add-host=host.docker.internal:host-gateway \
+-e OLLAMA_HOST="http://host.docker.internal:11434" \
 -p 8888:8888"""
