@@ -258,3 +258,7 @@ jobs:
           asset_name: latest.yml
           tag: v${{ steps.package-info.outputs.version}}
           overwrite: true
+
+  e2e-test:
+    needs: publish
+    uses: ./.github/workflows/e2e-app-test.yml

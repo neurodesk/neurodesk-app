@@ -166,7 +166,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   if (!overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
-        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse;`
+        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chmod 777 /neurodesktop-storage; chmod 777 /data;`
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
