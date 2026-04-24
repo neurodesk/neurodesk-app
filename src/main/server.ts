@@ -135,7 +135,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       '-m //lib/qemu:user',
       `--mount-rw ${neurodesktopStorageDir}:/neurodesktop-storage`,
       `--volume neurodeskHome,${20 * 1024},/home,persist`,
-      '--rebuild',
       '--auto-scale'
     ];
   } else {
@@ -296,6 +295,18 @@ function createLaunchScript(
       .split('.')
       .join('')
       .slice(0, 4);
+  }
+
+  const isTinyRange = engineType === EngineType.TinyRange;
+  if (isTinyRange) {
+    const buildDir = path.join(os.homedir(), 'neurodesktop-storage', 'build');
+    if (fs.existsSync(buildDir)) {
+      fs.rmSync(path.join(buildDir, 'persist'), {
+        recursive: true,
+        force: true
+      });
+      log.info(`Removed TinyRange buildDir due to port change: ${buildDir}`);
+    }
   }
 
   // Resolve container name with health check
@@ -459,7 +470,8 @@ export class JupyterServer {
               process.env.JLAB_DESKTOP_WORKSPACES_DIR || jlabWorkspacesDir,
             ...serverEnvVars
           },
-          timeout: 500000000
+          timeout: 500000000,
+          maxBuffer: 1024 * 1024 * 10 // increase max buffer to 10 MB
         };
 
         // console.debug(
@@ -631,7 +643,7 @@ export class JupyterServer {
           if (this._info.engine === EngineType.TinyRange) {
             // Kill tinyrange and any QEMU processes it spawned
             execFile(
-              `killall tinyrange 2>/dev/null; killall qemu-system-x86_64 2>/dev/null; killall qemu-system-aarch64 2>/dev/null`,
+              `killall tinyrange 2>/dev/null; killall tinyrange_qemu 2>/dev/null; killall qemu-system-x86_64 2>/dev/null; killall qemu-system-aarch64 2>/dev/null`,
               { shell: '/bin/bash' }
             );
           } else {
