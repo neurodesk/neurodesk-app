@@ -1,4 +1,4 @@
-import { ChildProcess, execFile, execSync } from 'child_process';
+import { ChildProcess, execFile, execFileSync, execSync } from 'child_process';
 import { IRegistry, SERVER_TOKEN_PREFIX } from './registry';
 import { dialog } from 'electron';
 import { ArrayExt } from '@lumino/algorithm';
@@ -39,6 +39,22 @@ function createTempFile(
   return tmpFilePath;
 }
 
+function getLinuxFileSystemType(directory: string): string {
+  if (process.platform !== 'linux') {
+    return '';
+  }
+
+  try {
+    return execFileSync('stat', ['-f', '-c', '%T', directory])
+      .toString()
+      .trim()
+      .toLowerCase();
+  } catch (error) {
+    log.warn(`Failed to determine filesystem type for ${directory}: ${error}`);
+    return '';
+  }
+}
+
 function createLaunchScript(
   serverInfo: JupyterServer.IInfo,
   engineType: EngineType,
@@ -47,6 +63,7 @@ function createLaunchScript(
 ): string {
   const isWin = process.platform === 'win32';
   const strPort = port.toString();
+  const containerJupyterPort = '8888';
   const config = Config.loadConfig(path.join(__dirname, '..'));
   const tag = config.ConfigToml.jupyter_neurodesk_version;
   let imageRegistry = `vnmd/neurodesktop:${tag}`;
@@ -90,6 +107,15 @@ function createLaunchScript(
   }
 
   console.debug(`!!!..... ${strPort} engineType ${engineType}`);
+  const workingDirectory = serverInfo.workingDirectory
+    ? resolveWorkingDirectory(serverInfo.workingDirectory)
+    : '';
+  const workingDirectoryFsType = workingDirectory
+    ? getLinuxFileSystemType(workingDirectory)
+    : '';
+  const isNfsWorkingDirectory =
+    process.platform === 'linux' &&
+    ['nfs', 'nfs4'].includes(workingDirectoryFsType);
 
   // engineCmd = isPodman && process.platform == 'linux' ? 'podman' : engineType;
   // note: traitlets<5.0 require fully specified arguments to
@@ -109,9 +135,10 @@ function createLaunchScript(
     `--privileged`,
     `--user=root`,
     `--name neurodeskapp-${strPort}`,
-    `-p ${strPort}:${strPort}`,
+    `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
     `-e NEURODESKTOP_VERSION=${tag}`,
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
+    `-e GRANT_SUDO=yes`,
     isWin
       ? `-v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
@@ -137,14 +164,16 @@ function createLaunchScript(
       ...commonLaunchArgs,
       isPodman
         ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
-        : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
-      parseInt(osVersion) >= 2310 && isDocker // use apparmor profile for ubuntu>=23.10
+        : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6 --add-host=host.docker.internal:host-gateway`,
+      isDocker && isNfsWorkingDirectory
+        ? '--security-opt apparmor=unconfined'
+        : parseInt(osVersion) >= 2310 && isDocker // use apparmor profile for ubuntu>=23.10
         ? '--security-opt apparmor=neurodeskapp'
         : ''
     ];
   }
-  if (serverInfo.workingDirectory) {
-    additionalDir = resolveWorkingDirectory(serverInfo.workingDirectory);
+  if (workingDirectory) {
+    additionalDir = workingDirectory;
     if (process.platform === 'linux') {
       // Only chmod if directory is in /home
       const isHomeDir = additionalDir.startsWith('/home/');
@@ -169,6 +198,13 @@ function createLaunchScript(
           }":/data`
         : ` --volume "${additionalDir}":/data`
     );
+
+    if (!isTinyRange && isNfsWorkingDirectory) {
+      launchArgs.push(` --volume "${additionalDir}":"${additionalDir}"`);
+      log.info(
+        `Detected ${workingDirectoryFsType} working directory; mounting ${additionalDir} at its native path`
+      );
+    }
   }
   launchArgs.push(imageRegistry);
 
@@ -179,7 +215,11 @@ function createLaunchScript(
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
-      launchArgs.push(arg.replace('{token}', token).replace('{port}', strPort));
+      launchArgs.push(
+        arg
+          .replace('{token}', token)
+          .replace('{port}', isTinyRange ? strPort : containerJupyterPort)
+      );
     }
     launchArgs.push(isTinyRange ? '"' : '');
   }
@@ -472,6 +512,13 @@ export class JupyterServer {
           console.log(
             'child process exited with ' + `code ${code} and signal ${signal}`
           );
+          if (
+            _code === 0 &&
+            !started &&
+            this._info.engine !== EngineType.TinyRange
+          ) {
+            return;
+          }
           if (_code === 0 || started) {
             /* On Windows, JupyterLab server sometimes crashes randomly during websocket
               connection. As a result of this, users experience kernel connections failures.
