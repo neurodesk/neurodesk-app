@@ -1,4 +1,4 @@
-import { ChildProcess, execFile, execSync } from 'child_process';
+import { ChildProcess, execFile, execFileSync, execSync } from 'child_process';
 import { IRegistry, SERVER_TOKEN_PREFIX } from './registry';
 import { dialog } from 'electron';
 import { ArrayExt } from '@lumino/algorithm';
@@ -37,6 +37,22 @@ function createTempFile(
   fs.writeFileSync(tmpFilePath, data, { encoding });
 
   return tmpFilePath;
+}
+
+function getLinuxFileSystemType(directory: string): string {
+  if (process.platform !== 'linux') {
+    return '';
+  }
+
+  try {
+    return execFileSync('stat', ['-f', '-c', '%T', directory])
+      .toString()
+      .trim()
+      .toLowerCase();
+  } catch (error) {
+    log.warn(`Failed to determine filesystem type for ${directory}: ${error}`);
+    return '';
+  }
 }
 
 function createLaunchScript(
@@ -91,6 +107,15 @@ function createLaunchScript(
   }
 
   console.debug(`!!!..... ${strPort} engineType ${engineType}`);
+  const workingDirectory = serverInfo.workingDirectory
+    ? resolveWorkingDirectory(serverInfo.workingDirectory)
+    : '';
+  const workingDirectoryFsType = workingDirectory
+    ? getLinuxFileSystemType(workingDirectory)
+    : '';
+  const isNfsWorkingDirectory =
+    process.platform === 'linux' &&
+    ['nfs', 'nfs4'].includes(workingDirectoryFsType);
 
   // engineCmd = isPodman && process.platform == 'linux' ? 'podman' : engineType;
   // note: traitlets<5.0 require fully specified arguments to
@@ -140,13 +165,15 @@ function createLaunchScript(
       isPodman
         ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
         : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6 --add-host=host.docker.internal:host-gateway`,
-      parseInt(osVersion) >= 2310 && isDocker // use apparmor profile for ubuntu>=23.10
+      isDocker && isNfsWorkingDirectory
+        ? '--security-opt apparmor=unconfined'
+        : parseInt(osVersion) >= 2310 && isDocker // use apparmor profile for ubuntu>=23.10
         ? '--security-opt apparmor=neurodeskapp'
         : ''
     ];
   }
-  if (serverInfo.workingDirectory) {
-    additionalDir = resolveWorkingDirectory(serverInfo.workingDirectory);
+  if (workingDirectory) {
+    additionalDir = workingDirectory;
     if (process.platform === 'linux') {
       // Only chmod if directory is in /home
       const isHomeDir = additionalDir.startsWith('/home/');
@@ -171,6 +198,13 @@ function createLaunchScript(
           }":/data`
         : ` --volume "${additionalDir}":/data`
     );
+
+    if (!isTinyRange && isNfsWorkingDirectory) {
+      launchArgs.push(` --volume "${additionalDir}":"${additionalDir}"`);
+      log.info(
+        `Detected ${workingDirectoryFsType} working directory; mounting ${additionalDir} at its native path`
+      );
+    }
   }
   launchArgs.push(imageRegistry);
 
