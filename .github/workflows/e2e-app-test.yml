@@ -260,7 +260,7 @@ jobs:
               CONTAINER=$($ENGINE ps --filter "name=neurodeskapp" --format "{{.Names}}" | head -1)
               if [ -n "$CONTAINER" ]; then
                 # Container name is fixed "neurodeskapp" — get port from published port mapping
-                PORT=$($ENGINE inspect "$CONTAINER" --format '{{range $p, $conf := .NetworkSettings.Ports}}{{range $conf}}{{.HostPort}}{{end}}{{end}}' | grep -oE '[0-9]+' | head -1)
+                PORT=$($ENGINE inspect "$CONTAINER" --format '{{range $p, $conf := .NetworkSettings.Ports}}{{range $conf}}{{.HostPort}}{{"\n"}}{{end}}{{end}}' | grep -oE '[0-9]+' | head -1)
                 TOKEN=$($ENGINE inspect "$CONTAINER" --format '{{json .Config.Cmd}}' | grep -oE "jlab:srvr:[a-f0-9]+")
                 echo "Container found: $CONTAINER (port=$PORT) after $((i * 15))s"
                 break
