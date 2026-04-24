@@ -1,7 +1,7 @@
 {
   "name": "neurodeskapp",
   "jlab_version": "4.0.0-1",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "tinyrange_version": "0.4.0",
   "description": "Neurodesk App",
   "main": "./build/out/main/main.js",
@@ -11,7 +11,7 @@
     "start:windows": "electron . --windows-ui",
     "start:linux": "electron . --linux-ui",
     "start:mac": "electron . --mac-ui",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
     "clean": "rimraf build dist",
     "watch:tsc": "tsc -w",
     "watch:assets": "node ./scripts/extract.js && node ./scripts/copyassets.js watch",
