@@ -30,12 +30,12 @@ jobs:
         shell: bash -el {0}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20.x'
+          node-version: '22.x'
           cache: 'yarn'
 
       - name: Install dependencies
@@ -44,7 +44,7 @@ jobs:
           npm install --global yarn --prefer-offline
           yarn install
 
-      # - uses: actions/download-artifact@v4
+      # - uses: actions/download-artifact@v6
       #   with:
       #     pattern: tinyrange-${{ matrix.cfg.tinyrange_os }}*
 
@@ -67,7 +67,7 @@ jobs:
           echo $(ls)
 
       - name: 'Find Release with tag v${{ steps.package-info.outputs.version}}'
-        uses: actions/github-script@v6
+        uses: actions/github-script@v8
         id: release-exists
         env:
           APP_VERSION: ${{ steps.package-info.outputs.version}}
@@ -105,7 +105,7 @@ jobs:
 
       - name: Upload Debian x64 Installer
         if: matrix.cfg.platform == 'linux-64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NeurodeskApp-debian-installer-x64
           path: |
@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload Fedora x64 Installer
         if: matrix.cfg.platform == 'linux-64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NeurodeskApp-fedora-installer-x64
           path: |
@@ -121,7 +121,7 @@ jobs:
 
       - name: Upload Debian arm64 Installer
         if: matrix.cfg.platform == 'linux-arm64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NeurodeskApp-debian-installer-arm64
           path: |
@@ -129,7 +129,7 @@ jobs:
 
       - name: Upload Fedora arm64 Installer
         if: matrix.cfg.platform == 'linux-arm64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NeurodeskApp-fedora-installer-arm64
           path: |
@@ -137,7 +137,7 @@ jobs:
 
       - name: Upload macOS x64 Installer
         if: matrix.cfg.platform == 'mac'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NeurodeskApp-mac-installer-x64
           path: |
@@ -145,7 +145,7 @@ jobs:
 
       - name: Upload macOS arm64 Installer
         if: matrix.cfg.platform == 'mac'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NeurodeskApp-mac-installer-arm64
           path: |
@@ -153,7 +153,7 @@ jobs:
 
       - name: Upload Windows Installer
         if: matrix.cfg.platform == 'win'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NeurodeskApp-windows-installer
           path: |
