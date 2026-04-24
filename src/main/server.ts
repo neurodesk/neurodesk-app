@@ -114,7 +114,6 @@ function createLaunchScript(
     `-e NEURODESKTOP_VERSION=${tag}`,
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
     `-e GRANT_SUDO=yes`,
-    `-e OLLAMA_HOST="http://host.docker.internal:11434"`,
     isWin
       ? `-v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
