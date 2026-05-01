@@ -332,6 +332,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
           echo "[neurodesk-app] ERROR: Checking container status:" >&2
           ${engineType} ps -a --filter name=${containerName} --format '{{.ID}} {{.Status}} {{.Names}}' 2>&1 >&2
           ${engineType} logs ${containerName} 2>&1 || true
+          exit $LAUNCH_EXIT
         else
           echo "[neurodesk-app] Container started: $CONTAINER_ID"
           ${engineType} logs -f ${containerName} 2>&1
