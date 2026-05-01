@@ -50,7 +50,7 @@ def run(url, token, code, timeout=1800):
     )
     r.raise_for_status()
     kernel_id = r.json()['id']
-    print(f'[jupyter_exec] created kernel {kernel_id}', flush=True)
+    print(f'[jupyter_exec] created kernel {kernel_id}', file=sys.stderr, flush=True)
 
     try:
         ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
@@ -77,6 +77,7 @@ def run(url, token, code, timeout=1800):
                 ):
                     print(
                         '[jupyter_exec] kernel is idle, sending code',
+                        file=sys.stderr,
                         flush=True
                     )
                     break

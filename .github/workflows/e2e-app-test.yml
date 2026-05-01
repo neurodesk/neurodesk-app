@@ -411,13 +411,35 @@ jobs:
         run: |
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
-          for T in /opt/tests/*; do
+          BASE_URL="http://127.0.0.1:${PORT}"
+
+          # Discover test files inside the VM via Jupyter kernel
+          TEST_FILES=$(python3 scripts/jupyter_exec.py \
+            --url "$BASE_URL" \
+            --token "$TOKEN" \
+            --code "import glob; print('\n'.join(sorted(glob.glob('/opt/tests/*.py'))))")
+
+          if [ -z "$TEST_FILES" ]; then
+            echo "No test files found in /opt/tests/"
+            exit 1
+          fi
+
+          echo "Discovered test files:"
+          echo "$TEST_FILES"
+
+          FAILED=0
+          while IFS= read -r T; do
+            [ -z "$T" ] && continue
             echo "=== Running pytest $T inside TinyRange via Jupyter kernel ==="
-            python3 scripts/jupyter_exec.py \
-              --url "http://127.0.0.1:${PORT}" \
+            if ! python3 scripts/jupyter_exec.py \
+              --url "$BASE_URL" \
               --token "$TOKEN" \
-              --pytest "$T"
-          done
+              --pytest "$T"; then
+              FAILED=1
+            fi
+          done <<< "$TEST_FILES"
+
+          exit $FAILED
 
       # ───────────────────────────────────────────────
       # Shutdown test
@@ -457,7 +479,7 @@ jobs:
             # TinyRange: check that the port is no longer listening
             PORT=${{ steps.container.outputs.port }}
             for i in $(seq 1 12); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/" 2>/dev/null || echo "000")
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/" 2>/dev/null || true)
               if [ "$STATUS" = "000" ]; then
                 echo "PASS: TinyRange VM stopped after app shutdown ($((i * 5))s)"
                 exit 0
