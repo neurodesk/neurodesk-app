@@ -38,7 +38,7 @@ jobs:
       # ───────────────────────────────────────────────
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Try to download pre-built artifact from the calling workflow.
       # If this was triggered via workflow_dispatch (no artifacts), fall back to building.
@@ -53,9 +53,9 @@ jobs:
       # Fallback: build from source when no artifact is available (workflow_dispatch)
       - name: Install node
         if: steps.download.outcome == 'failure'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20.x'
+          node-version: '22.x'
           cache: 'yarn'
 
       - name: Install dependencies (fallback build)

@@ -709,6 +709,12 @@ export class JupyterApplication implements IApplication, IDisposable {
       EventTypeMain.SetLogLevel,
       (_event, logLevel: LogLevel) => {
         userSettings.setValue(SettingType.logLevel, logLevel);
+        userSettings.save();
+        log.transports.file.level = logLevel;
+        if (log.transports.console.level !== false) {
+          log.transports.console.level = logLevel;
+        }
+        log.info(`Log level changed to: ${logLevel}`);
       }
     );
 

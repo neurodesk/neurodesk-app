@@ -42,6 +42,39 @@ function createTempFile(
   return tmpFilePath;
 }
 
+export interface INfsMountInfo {
+  server: string;
+  exportPath: string;
+  nfsVersion: string;
+  mountPoint: string;
+}
+
+function getLinuxFileSystemType(directory: string): string {
+  if (process.platform !== 'linux') {
+    return '';
+  }
+
+  try {
+    // Use /proc/mounts instead of stat -f which can hang on NFS mounts
+    const mounts = fs.readFileSync('/proc/mounts', 'utf8');
+    let bestMatch = '';
+    let bestFsType = '';
+    for (const line of mounts.split('\n')) {
+      const parts = line.split(' ');
+      if (parts.length >= 3 && directory.startsWith(parts[1])) {
+        if (parts[1].length > bestMatch.length) {
+          bestMatch = parts[1];
+          bestFsType = parts[2];
+        }
+      }
+    }
+    return bestFsType.toLowerCase();
+  } catch (error) {
+    log.warn(`Failed to determine filesystem type for ${directory}: ${error}`);
+    return '';
+  }
+}
+
 export interface ILaunchScriptParams {
   engineType: EngineType;
   port: number;
@@ -54,6 +87,7 @@ export interface ILaunchScriptParams {
   tinyrangePath: string;
   osVersion: string;
   containerName?: string;
+  isNfsWorkingDirectory?: boolean;
 }
 
 /**
@@ -94,11 +128,13 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     cvmfsMode,
     overrideDefaultServerArgs,
     tinyrangePath,
-    osVersion
+    osVersion,
+    isNfsWorkingDirectory = false
   } = params;
 
   const isWin = platform === 'win32';
   const strPort = port.toString();
+  const containerJupyterPort = '8888';
   const imageRegistry = `vnmd/neurodesktop:${tag}`;
   const isPodman = engineType === EngineType.Podman;
   const isTinyRange = engineType === EngineType.TinyRange;
@@ -109,15 +145,19 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     : '~/neurodesktop-storage';
   const containerName = params.containerName || BASE_CONTAINER_NAME;
 
+  const resolvedWorkingDir = workingDirectory
+    ? resolveWorkingDirectory(workingDirectory)
+    : '';
+
   let commonLaunchArgs = [
     `--shm-size=1gb`,
-    `-it`,
     `--privileged`,
     `--user=root`,
     `--name ${containerName}`,
-    `-p ${strPort}:${strPort}`,
+    `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
     `-e NEURODESKTOP_VERSION=${tag}`,
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
+    `-e GRANT_SUDO=yes`,
     isWin
       ? `-v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
@@ -151,15 +191,23 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     ];
   }
 
-  if (workingDirectory) {
-    const additionalDir = resolveWorkingDirectory(workingDirectory);
+  if (resolvedWorkingDir) {
     launchArgs.push(
       isTinyRange
         ? `--mount-rw "${
-            isWin ? additionalDir.replace(/\\/g, '//') : additionalDir
+            isWin ? resolvedWorkingDir.replace(/\\/g, '//') : resolvedWorkingDir
           }":/data`
-        : ` --volume "${additionalDir}":/data`
+        : ` --volume "${resolvedWorkingDir}":/data`
     );
+
+    if (!isTinyRange && isNfsWorkingDirectory) {
+      launchArgs.push(
+        ` --volume "${resolvedWorkingDir}":"${resolvedWorkingDir}"`
+      );
+      log.info(
+        `Detected NFS working directory; mounting ${resolvedWorkingDir} at its native path`
+      );
+    }
   }
   launchArgs.push(imageRegistry);
 
@@ -170,7 +218,11 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
-      launchArgs.push(arg.replace('{token}', token).replace('{port}', strPort));
+      launchArgs.push(
+        arg
+          .replace('{token}', token)
+          .replace('{port}', isTinyRange ? strPort : containerJupyterPort)
+      );
     }
     launchArgs.push(isTinyRange ? '"' : '');
   }
@@ -231,6 +283,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
             ${engineType} pull docker.io/${imageRegistry}
             ${launchCmd}
         )
+        ${engineType} logs -f ${containerName}
       `;
     }
   } else {
@@ -240,15 +293,48 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         `;
     } else {
       script = `
+        echo "[neurodesk-app] Launch script started at $(date -Iseconds)"
+        echo "[neurodesk-app] Engine: ${engineType}"
+        echo "[neurodesk-app] Working directory: ${
+          resolvedWorkingDir || 'none'
+        }"
+        echo "[neurodesk-app] NFS working directory: ${isNfsWorkingDirectory}"
+        echo "[neurodesk-app] Container name: ${containerName}"
+        echo "[neurodesk-app] Port: ${strPort}"
+        ${
+          resolvedWorkingDir
+            ? `echo "[neurodesk-app] Working dir mount info: $(mount | grep '${resolvedWorkingDir
+                .split('/')
+                .slice(0, 3)
+                .join('/')}' 2>/dev/null || echo 'no mount found')"`
+            : ''
+        }
+        ${
+          resolvedWorkingDir
+            ? `echo "[neurodesk-app] Working dir accessible: $(ls -ld '${resolvedWorkingDir}' 2>&1)"`
+            : ''
+        }
         if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
           ${stopCmd}
           ${volumeCreate}
-          ${launchCmd}
+          CONTAINER_ID=$(${launchCmd})
+          LAUNCH_EXIT=$?
         else
           ${stopCmd}
           ${volumeCreate}
           ${engineType} pull docker.io/${imageRegistry}
-          ${launchCmd}
+          CONTAINER_ID=$(${launchCmd})
+          LAUNCH_EXIT=$?
+        fi
+
+        if [ $LAUNCH_EXIT -ne 0 ]; then
+          echo "[neurodesk-app] ERROR: ${engineType} run exited with code $LAUNCH_EXIT" >&2
+          echo "[neurodesk-app] ERROR: Checking container status:" >&2
+          ${engineType} ps -a --filter name=${containerName} --format '{{.ID}} {{.Status}} {{.Names}}' 2>&1 >&2
+          ${engineType} logs ${containerName} 2>&1 || true
+        else
+          echo "[neurodesk-app] Container started: $CONTAINER_ID"
+          ${engineType} logs -f ${containerName} 2>&1
         fi
         `;
     }
@@ -267,7 +353,7 @@ function createLaunchScript(
   const config = Config.loadConfig(path.join(__dirname, '..'));
   const tag = config.ConfigToml.jupyter_neurodesk_version;
   const isDev = process.env.NODE_ENV === 'development';
-  console.log('isDev', isDev);
+  log.debug('isDev', isDev);
   const tinyrangePath = isDev
     ? path
         .join(
@@ -312,9 +398,37 @@ function createLaunchScript(
   // Resolve container name with health check
   const containerName = resolveContainerName(engineType);
 
-  console.debug(
-    `!!!..... ${port} engineType ${engineType} containerName ${containerName}`
+  log.info(
+    `Server launch: port=${port} engine=${engineType} container=${containerName}`
   );
+
+  const resolvedWorkDir = serverInfo.workingDirectory
+    ? resolveWorkingDirectory(serverInfo.workingDirectory)
+    : '';
+  const workingDirectoryFsType = resolvedWorkDir
+    ? getLinuxFileSystemType(resolvedWorkDir)
+    : '';
+  const isNfsWorkingDirectory =
+    process.platform === 'linux' &&
+    ['nfs', 'nfs4'].includes(workingDirectoryFsType);
+
+  // Diagnostic logging for working directory and NFS detection
+  log.info(
+    `Working directory diagnostics: raw="${serverInfo.workingDirectory}" resolved="${resolvedWorkDir}" fsType="${workingDirectoryFsType}" isNfs=${isNfsWorkingDirectory}`
+  );
+  if (resolvedWorkDir) {
+    try {
+      const dirExists = fs.existsSync(resolvedWorkDir);
+      const dirStats = dirExists ? fs.statSync(resolvedWorkDir) : null;
+      log.info(
+        `Working directory access: exists=${dirExists} isDir=${dirStats?.isDirectory()} uid=${
+          dirStats?.uid
+        } gid=${dirStats?.gid} mode=${dirStats?.mode?.toString(8)}`
+      );
+    } catch (accessErr) {
+      log.warn(`Working directory access check failed: ${accessErr}`);
+    }
+  }
 
   const script = generateLaunchScript({
     engineType,
@@ -327,13 +441,14 @@ function createLaunchScript(
     overrideDefaultServerArgs: serverInfo.overrideDefaultServerArgs,
     tinyrangePath,
     osVersion,
-    containerName
+    containerName,
+    isNfsWorkingDirectory
   });
 
   const ext = isWin ? 'bat' : 'sh';
   const scriptPath = createTempFile(`launch.${ext}`, script);
 
-  console.debug(`Server launch script:\n${script}`);
+  log.info(`Server launch script:\n${script}`);
 
   if (!isWin) {
     fs.chmodSync(scriptPath, 0o755);
@@ -347,7 +462,7 @@ async function checkIfUrlExists(url: URL): Promise<boolean> {
     const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
     const req = requestFn(url, function (r) {
       resolve(r.statusCode! >= 200 && r.statusCode! < 400);
-      console.debug(`Checking if ${url} exists... ${r.statusCode}`);
+      log.debug(`Checking if ${url} exists... ${r.statusCode}`);
     });
     req.on('error', function (err) {
       resolve(false);
@@ -409,12 +524,12 @@ export class JupyterServer {
     let stderrChunks: string[] = [];
     let stdoutChunks: string[] = [];
 
-    console.debug('Starting Jupyter server....');
+    log.info('Starting Jupyter server....');
     this._startServer = new Promise<JupyterServer.IInfo>(
       // eslint-disable-next-line no-async-promise-executor
       async (resolve, reject) => {
         const isWin = process.platform === 'win32';
-        console.debug('isWin: ' + isWin);
+        log.debug('isWin: ' + isWin);
         // const pythonPath = this._info.environment.path;
         // if (!fs.existsSync(pythonPath)) {
         //   reject(`Error: Environment not found at: ${pythonPath}`);
@@ -429,8 +544,8 @@ export class JupyterServer {
           `http://127.0.0.1:${this._info.port}/lab?token=${this._info.token}`
         );
 
-        console.log('token', this._info.token);
-        console.log(`ServerApp.port=${this._info.port}`);
+        log.debug('token', this._info.token);
+        log.info(`ServerApp.port=${this._info.port}`);
 
         const {
           scriptPath: launchScriptPath,
@@ -490,10 +605,10 @@ export class JupyterServer {
             if (up) {
               started = true;
               fs.unlinkSync(launchScriptPath);
-              console.log('delete launchScriptPath', launchScriptPath);
+              log.debug('delete launchScriptPath', launchScriptPath);
               resolve(this._info);
             } else {
-              console.debug("Server didn't start in time");
+              log.error("Server didn't start in time");
               this._serverStartFailed();
               reject(
                 new Error(
@@ -506,7 +621,7 @@ export class JupyterServer {
             }
           })
           .catch(err => {
-            console.error('Server start race failed:', err);
+            log.error('Server start race failed:', err);
             this._serverStartFailed();
             reject(err);
           });
@@ -522,15 +637,15 @@ export class JupyterServer {
         this._nbServer.stderr!.on('data', (data: string) => {
           // console.debug(`stderr: ${data}`);
           if (data.includes('The input device is not a TTY.')) {
-            console.error('The input device is not a TTY.');
+            log.error('The input device is not a TTY.');
             // Handle the error appropriately here
           } else if (!data.includes('ERROR failed to dial vm port')) {
-            console.debug(`stderr: ${data}`);
+            log.warn(`stderr: ${data}`);
             stderrChunks = stderrChunks.concat(data);
             if (this._progressView) {
               this._progressView.setChildProcessLog(data);
             } else {
-              console.debug('no progress view');
+              log.debug('no progress view');
             }
             // reject(new Error('Failed to launch Neurodesk from stderr ' + this._restartCount + this._info.port + stderrChunks + stdoutChunks));
           }
@@ -554,9 +669,25 @@ export class JupyterServer {
             'child process exited with ' +
               `code ${code} and signal ${signal} on this._restartCount ${this._restartCount}`
           );
-          console.log(
+          log.info(
             'child process exited with ' + `code ${code} and signal ${signal}`
           );
+          if (_code !== 0 && !started) {
+            log.error(
+              `Server process failed (code=${code}, signal=${signal}). ` +
+                `engine=${this._info.engine} port=${this._info.port} container=${this._info.containerName} ` +
+                `workingDir=${this._info.workingDirectory}\n` +
+                `Last stderr: ${stderrChunks.slice(-5).join('')}\n` +
+                `Last stdout: ${stdoutChunks.slice(-5).join('')}`
+            );
+          }
+          if (
+            _code === 0 &&
+            !started &&
+            this._info.engine !== EngineType.TinyRange
+          ) {
+            return;
+          }
           if (_code === 0 || started) {
             /* On Windows, JupyterLab server sometimes crashes randomly during websocket
               connection. As a result of this, users experience kernel connections failures.
@@ -575,7 +706,7 @@ export class JupyterServer {
               started = false;
               this._startServer = null;
               this.start(this._info.port, this._info.token).catch(err => {
-                console.error('Server restart failed:', err);
+                log.error('Server restart failed:', err);
               });
               this._restartCount++;
             }
@@ -742,7 +873,7 @@ export class JupyterServer {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore
           if (error.code === 'ECONNREFUSED') {
-            console.log(
+            log.info(
               'Server not up yet, waiting for it to start...',
               error.code
             );
@@ -914,10 +1045,10 @@ export class JupyterServerFactory implements IServerFactory, IDisposable {
   ): Promise<JupyterServerFactory.IFactoryItem> {
     let item: JupyterServerFactory.IFactoryItem;
 
-    console.debug('~ createFreeServer', opts);
+    log.debug('~ createFreeServer', opts);
     item = this._createServer(opts);
     item.server.start().catch(error => {
-      console.error('Failed to start server ~~', error);
+      log.error('Failed to start server ~~', error);
       this._removeFailedServer(item.factoryId);
     });
     return item;
@@ -936,7 +1067,7 @@ export class JupyterServerFactory implements IServerFactory, IDisposable {
     progressView?: ProgressView
   ): Promise<JupyterServerFactory.IFactoryItem> {
     let item: JupyterServerFactory.IFactoryItem;
-    console.log('~ createServer', opts);
+    log.info('~ createServer', opts);
 
     item =
       (await this._findUnusedServer(opts)) ||
@@ -944,11 +1075,11 @@ export class JupyterServerFactory implements IServerFactory, IDisposable {
     item.used = true;
 
     item.server.start().catch(error => {
-      console.error('~ Failed to start server', error);
+      log.error('~ Failed to start server', error);
       this._removeFailedServer(item.factoryId);
     });
 
-    console.debug('~ createServer ~ ', item);
+    log.debug('~ createServer ~ ', item);
     return item;
   }
 

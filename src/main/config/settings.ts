@@ -152,7 +152,7 @@ export class UserSettings {
       cvmfsMode: new Setting<CvmfsMode>(CvmfsMode.Stream),
       ctrlWBehavior: new Setting<CtrlWBehavior>(CtrlWBehavior.CloseTab),
 
-      logLevel: new Setting<string>(LogLevel.Warn)
+      logLevel: new Setting<string>(LogLevel.Info)
     };
 
     if (readSettings) {

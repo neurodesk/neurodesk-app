@@ -54,7 +54,7 @@ function parseArgs(argv: string[]) {
     .option('log-level', {
       describe: 'Log level',
       choices: ['error', 'warn', 'info', 'verbose', 'debug'],
-      default: 'warn'
+      default: 'info'
     })
     .help('h')
     .alias({
@@ -81,7 +81,7 @@ const logLevel = getLogLevel();
 
 if (isDevMode()) {
   log.transports.console.level = logLevel;
-  log.transports.file.level = false;
+  log.transports.file.level = logLevel;
 
   log.info('In development mode');
   log.info(`Logging to console at '${log.transports.console.level}' level`);

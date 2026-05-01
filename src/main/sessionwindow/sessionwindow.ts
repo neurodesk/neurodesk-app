@@ -304,6 +304,18 @@ export class SessionWindow implements IDisposable {
   }
 
   private _loadLabView() {
+    if (!this._sessionConfig?.url) {
+      this._showProgressView(
+        'Failed to load JupyterLab',
+        `<div class="message-row">Session is missing server connection information.</div>
+        <div class="message-row">
+          <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
+        </div>`,
+        false
+      );
+      return;
+    }
+
     const labView = new LabView({
       isDarkTheme: this._isDarkTheme,
       parent: this,
@@ -493,6 +505,8 @@ export class SessionWindow implements IDisposable {
           `,
             false
           );
+
+          return;
         }
 
         this._contentViewType = ContentViewType.Lab;
@@ -508,10 +522,6 @@ export class SessionWindow implements IDisposable {
         } else {
           this._hideProgressView();
         }
-        appData.addSessionToRecents({
-          workingDirectory: sessionConfig.resolvedWorkingDirectory,
-          filesToOpen: [...sessionConfig.filesToOpen]
-        });
       }
     );
 

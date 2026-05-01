@@ -14,12 +14,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
         with:
           ref: master
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.9'
 
@@ -28,9 +28,9 @@ jobs:
           python -m pip install tbump
 
       - name: Install node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20.x'
+          node-version: '22.x'
 
       - name: Install npm dependencies
         run: |
@@ -98,4 +98,3 @@ jobs:
             hub pull-request -m "Update to Neurodesk v${NEURODESK_LATEST}" \
                 -m "New Neurodesk release [v${NEURODESK_LATEST}](https://github.com/NeuroDesk/neurodesk.github.io/blob/main/data/neurodesktop.toml) is available. Please review the lock file carefully.".
           fi
-
