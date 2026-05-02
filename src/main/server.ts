@@ -157,7 +157,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
     `-e NEURODESKTOP_VERSION=${tag}`,
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
-    `-e GRANT_SUDO=yes`,
+    `-e GRANT_SUDO=no`,
     isWin
       ? `-v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
@@ -214,7 +214,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   if (!overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
-        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chmod 777 /neurodesktop-storage; chmod 777 /data;`
+        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R "$(id -u)":"$(id -g)" /neurodesktop-storage; chmod -R 777 /neurodesktop-storage; chown -R "$(id -u)":"$(id -g)" /data; chmod -R 777 /data;`
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
@@ -224,7 +224,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
           .replace('{port}', isTinyRange ? strPort : containerJupyterPort)
       );
     }
-    launchArgs.push(isTinyRange ? '"' : '');
+    if (isTinyRange) {
+      launchArgs.push('--FileContentsManager.delete_to_trash=False"');
+    }
   }
 
   let launchCmd = launchArgs.join(' ');

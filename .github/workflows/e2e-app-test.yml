@@ -177,7 +177,7 @@ jobs:
             APP_BIN="/Applications/NeurodeskApp.app/Contents/MacOS/NeurodeskApp"
           else
             WORKING_DIR="$TEMP/neurodesk-test"
-            APP_BIN="dist/win-unpacked/NeurodeskApp-Setup.exe"
+            APP_BIN="dist/NeurodeskApp-Setup.exe"
             APP_LOG="$TEMP/neurodeskapp-stdout.log"
           fi
 
@@ -404,7 +404,7 @@ jobs:
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
           $ENGINE exec "$CONTAINER_NAME" bash -c \
-            'chown -R jovyan:jovyan /home/jovyan/.cache 2>/dev/null || true; su jovyan -s /bin/bash -c "pytest /opt/tests/ -v"'
+            'chown -R jovyan:jovyan /home/jovyan/.cache 2>/dev/null || true; su jovyan -s /bin/bash -c "export PATH=/opt/conda/bin:\$PATH; pytest /opt/tests/ -v"'
           echo 'PASS: All unit tests passed'
 
       - name: 'Test: Pytest suite via Jupyter kernel (TinyRange)'
