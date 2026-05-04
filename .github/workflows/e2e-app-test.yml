@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         cfg:
-          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: docker, artifact: NeurodeskApp-debian-installer-x64 }
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-20.04, tinyrange_os: linux-amd64, engine: docker, artifact: NeurodeskApp-debian-installer-x64 }
           - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: tinyrange, artifact: NeurodeskApp-mac-installer-arm64 }
           - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: tinyrange, artifact: NeurodeskApp-windows-installer }
           - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange, artifact: NeurodeskApp-debian-installer-x64 }
@@ -403,8 +403,7 @@ jobs:
           ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
 
-          $ENGINE exec "$CONTAINER_NAME" bash -c \
-            'chown -R jovyan:jovyan /home/jovyan/.cache 2>/dev/null || true; su jovyan -s /bin/bash -c "export PATH=/opt/conda/bin:\$PATH; pytest /opt/tests/ -v"'
+          $ENGINE exec -u jovyan "$CONTAINER_NAME" pytest /opt/tests/ -v
           echo 'PASS: All unit tests passed'
 
       - name: 'Test: Pytest suite via Jupyter kernel (TinyRange)'

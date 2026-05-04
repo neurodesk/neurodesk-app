@@ -145,9 +145,20 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     : '~/neurodesktop-storage';
   const containerName = params.containerName || BASE_CONTAINER_NAME;
 
-  const resolvedWorkingDir = workingDirectory
-    ? resolveWorkingDirectory(workingDirectory)
-    : '';
+  let resolvedWorkingDir = '';
+  if (workingDirectory) {
+    const candidate = resolveWorkingDirectory(workingDirectory, false);
+    try {
+      if (candidate && fs.statSync(candidate).isDirectory()) {
+        resolvedWorkingDir = candidate;
+      }
+    } catch {
+      // Directory doesn't exist or isn't accessible — skip /data mount
+      log.error(
+        `Working directory ${candidate} is not accessible, skipping mount`
+      );
+    }
+  }
 
   let commonLaunchArgs = [
     `--shm-size=1gb`,
@@ -314,6 +325,17 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         ${
           resolvedWorkingDir
             ? `echo "[neurodesk-app] Working dir accessible: $(ls -ld '${resolvedWorkingDir}' 2>&1)"`
+            : ''
+        }
+        ${
+          isNfsWorkingDirectory && resolvedWorkingDir
+            ? `
+        if ! timeout 5 ls -ld '${resolvedWorkingDir}' &>/dev/null; then
+          echo "[neurodesk-app] ERROR: Working directory not accessible (NFS mount may be stale)" >&2
+          exit 1
+        fi
+        echo "[neurodesk-app] NFS mount check passed for ${resolvedWorkingDir}"
+        `
             : ''
         }
         if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
