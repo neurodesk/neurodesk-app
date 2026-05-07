@@ -194,7 +194,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
     `-e NEURODESKTOP_VERSION=${tag}`,
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
-    `-e GRANT_SUDO=no`,
+    `-e GRANT_SUDO=yes`,
     isWin
       ? `-v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
