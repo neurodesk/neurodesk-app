@@ -39,7 +39,7 @@ def _make_msg(msg_type, content, session):
     }
 
 
-def run(url, token, code, timeout=1800):
+def run(url, token, code, timeout=1800, quiet_on_success=False):
     headers = {'Authorization': f'token {token}'}
 
     r = requests.post(
@@ -51,6 +51,15 @@ def run(url, token, code, timeout=1800):
     r.raise_for_status()
     kernel_id = r.json()['id']
     print(f'[jupyter_exec] created kernel {kernel_id}', file=sys.stderr, flush=True)
+
+    buffered_output = []
+
+    def _write(stream, text):
+        if quiet_on_success:
+            buffered_output.append((stream, text))
+        else:
+            stream.write(text)
+            stream.flush()
 
     try:
         ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
@@ -127,14 +136,12 @@ def run(url, token, code, timeout=1800):
                         if content.get('name') == 'stdout'
                         else sys.stderr
                     )
-                    out.write(content.get('text', ''))
-                    out.flush()
+                    _write(out, content.get('text', ''))
                 elif mtype == 'error':
                     ename = content.get('ename', '')
                     evalue = content.get('evalue', '')
                     tb = '\n'.join(content.get('traceback', []))
-                    sys.stderr.write(f'\n{tb}\n')
-                    sys.stderr.flush()
+                    _write(sys.stderr, f'\n{tb}\n')
                     if ename == 'SystemExit':
                         try:
                             exit_code = int(evalue)
@@ -156,7 +163,15 @@ def run(url, token, code, timeout=1800):
                 )
                 return 1
 
-            return exit_code if exit_code is not None else 0
+            rc = exit_code if exit_code is not None else 0
+
+            # Flush buffered output only on failure
+            if quiet_on_success and rc != 0:
+                for stream, text in buffered_output:
+                    stream.write(text)
+                    stream.flush()
+
+            return rc
         finally:
             try:
                 ws.close()
@@ -196,18 +211,29 @@ def main():
         default=1800,
         help='Per-execution timeout in seconds'
     )
+    ap.add_argument(
+        '--quiet',
+        action='store_true',
+        help='Suppress output when execution succeeds (exit code 0)'
+    )
     args = ap.parse_args()
 
     if args.pytest:
         code = (
-            'import pytest, sys\n'
+            'import subprocess, sys\n'
+            'subprocess.run(["sudo", "chown", "-R", "jovyan:jovyan", "/home/jovyan/.cache"], check=False)\n'
+            'try:\n'
+            '    import nest_asyncio; nest_asyncio.apply()\n'
+            'except ImportError:\n'
+            '    pass\n'
+            'import pytest\n'
             f'sys.exit(pytest.main([{args.pytest!r}, "-v"]))\n'
         )
     else:
         code = args.code
 
     url = args.url.rstrip('/')
-    sys.exit(run(url, args.token, code, timeout=args.timeout))
+    sys.exit(run(url, args.token, code, timeout=args.timeout, quiet_on_success=args.quiet))
 
 
 if __name__ == '__main__':
