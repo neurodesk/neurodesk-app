@@ -101,14 +101,18 @@ export function resolveContainerName(engineType: EngineType): string {
   }
 
   // Always remove any existing container with the base name
+  const isLinux = process.platform === 'linux';
   const rmCmd =
     process.platform === 'win32'
       ? `${engineType} rm -f ${BASE_CONTAINER_NAME} >NUL 2>&1`
-      : `${engineType} rm -f ${BASE_CONTAINER_NAME} &>/dev/null`;
+      : `${isLinux ? 'timeout 30 ' : ''}${engineType} rm -f ${BASE_CONTAINER_NAME} &>/dev/null`;
   try {
-    execSync(rmCmd, { encoding: 'utf-8' });
+    execSync(rmCmd, { encoding: 'utf-8', timeout: 35000 });
   } catch {
-    // Container doesn't exist or rm failed — either way, proceed
+    // Container doesn't exist, rm failed, or timed out — proceed
+    log.error(
+      `Failed to remove existing container with name ${BASE_CONTAINER_NAME} (it may not exist): ${engineType} rm -f ${BASE_CONTAINER_NAME}`
+    );
   }
   return BASE_CONTAINER_NAME;
 }
@@ -133,6 +137,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   } = params;
 
   const isWin = platform === 'win32';
+  const isLinux = platform === 'linux';
   const strPort = port.toString();
   const containerJupyterPort = '8888';
   const imageRegistry = `vnmd/neurodesktop:${tag}`;
@@ -147,16 +152,21 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
 
   let resolvedWorkingDir = '';
   if (workingDirectory) {
-    const candidate = resolveWorkingDirectory(workingDirectory, false);
-    try {
-      if (candidate && fs.statSync(candidate).isDirectory()) {
-        resolvedWorkingDir = candidate;
+    if (isNfsWorkingDirectory) {
+      // Skip statSync for NFS — may hang on stale mounts.
+      // Trust that createLaunchScript already validated via /proc/mounts.
+      resolvedWorkingDir = resolveWorkingDirectory(workingDirectory, false);
+    } else {
+      const candidate = resolveWorkingDirectory(workingDirectory, false);
+      try {
+        if (candidate && fs.statSync(candidate).isDirectory()) {
+          resolvedWorkingDir = candidate;
+        }
+      } catch {
+        log.error(
+          `Working directory ${candidate} is not accessible, skipping mount`
+        );
       }
-    } catch {
-      // Directory doesn't exist or isn't accessible — skip /data mount
-      log.error(
-        `Working directory ${candidate} is not accessible, skipping mount`
-      );
     }
   }
 
@@ -210,15 +220,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
           }":/data`
         : ` --volume "${resolvedWorkingDir}":/data`
     );
-
-    if (!isTinyRange && isNfsWorkingDirectory) {
-      launchArgs.push(
-        ` --volume "${resolvedWorkingDir}":"${resolvedWorkingDir}"`
-      );
-      log.info(
-        `Detected NFS working directory; mounting ${resolvedWorkingDir} at its native path`
-      );
-    }
   }
   launchArgs.push(imageRegistry);
 
@@ -252,7 +253,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   let removeCmd = `${
     isWin
       ? `${engineType} container exists ${containerName} >NUL 2>&1 && ${engineType} rm -f ${containerName} >NUL 2>&1`
-      : `${engineType} container exists ${containerName} &> /dev/null && ${engineType} rm -f ${containerName} &> /dev/null`
+      : `${engineType} container exists ${containerName} &> /dev/null && ${isLinux ? 'timeout 30 ' : ''}${engineType} rm -f ${containerName} &> /dev/null`
   }`;
   let stopCmd = `${
     isPodman
@@ -261,7 +262,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       ? ``
       : isWin
       ? `${engineType} rm -f ${containerName} >NUL 2>&1`
-      : `${engineType} rm -f ${containerName} &> /dev/null`
+      : `${isLinux ? 'timeout 30 ' : ''}${engineType} rm -f ${containerName} &> /dev/null`
   }`;
 
   let script: string;
@@ -341,15 +342,25 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
           ${stopCmd}
           ${volumeCreate}
-          CONTAINER_ID=$(${launchCmd})
+          CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
         else
           ${stopCmd}
           ${volumeCreate}
-          ${engineType} pull docker.io/${imageRegistry}
-          CONTAINER_ID=$(${launchCmd})
+          ${isLinux ? 'timeout 300 ' : ''}${engineType} pull docker.io/${imageRegistry}
+          CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
         fi
+        ${
+          isLinux
+            ? `
+        if [ $LAUNCH_EXIT -eq 124 ]; then
+          echo "[neurodesk-app] ERROR: ${engineType} run timed out after 300s — Docker daemon may be stuck on NFS mount operations" >&2
+          echo "[neurodesk-app] ERROR: If this persists, try: sudo systemctl restart docker" >&2
+          exit 124
+        fi`
+            : ''
+        }
 
         if [ $LAUNCH_EXIT -ne 0 ]; then
           echo "[neurodesk-app] ERROR: ${engineType} run exited with code $LAUNCH_EXIT" >&2
@@ -441,7 +452,11 @@ function createLaunchScript(
   log.info(
     `Working directory diagnostics: raw="${serverInfo.workingDirectory}" resolved="${resolvedWorkDir}" fsType="${workingDirectoryFsType}" isNfs=${isNfsWorkingDirectory}`
   );
-  if (resolvedWorkDir) {
+  if (isNfsWorkingDirectory) {
+    log.info(
+      `Skipping statSync for NFS working directory ${resolvedWorkDir} (may hang on stale mounts)`
+    );
+  } else if (resolvedWorkDir) {
     try {
       const dirExists = fs.existsSync(resolvedWorkDir);
       const dirStats = dirExists ? fs.statSync(resolvedWorkDir) : null;
@@ -488,6 +503,10 @@ async function checkIfUrlExists(url: URL): Promise<boolean> {
     const req = requestFn(url, function (r) {
       resolve(r.statusCode! >= 200 && r.statusCode! < 400);
       log.debug(`Checking if ${url} exists... ${r.statusCode}`);
+    });
+    req.setTimeout(10000, () => {
+      req.destroy();
+      resolve(false);
     });
     req.on('error', function (err) {
       resolve(false);
@@ -600,7 +619,7 @@ export class JupyterServer {
         }
 
         const execOptions = {
-          cwd: this._info.workingDirectory,
+          cwd: os.tmpdir(),
           shell: isWin ? 'cmd.exe' : '/bin/bash',
           env: {
             ...process.env,
@@ -850,6 +869,22 @@ export class JupyterServer {
 
   private _serverStartFailed(): void {
     this._cleanupListeners();
+    // Kill the child process (launch script running docker logs -f)
+    if (this._nbServer && !this._nbServer.killed) {
+      this._nbServer.kill();
+    }
+    // Remove the orphaned container asynchronously (don't block)
+    if (this._info.containerName && this._info.engine) {
+      const engine = this._info.engine;
+      const container = this._info.containerName;
+      const rmCmd =
+        process.platform === 'win32'
+          ? `${engine} rm -f ${container}`
+          : `${process.platform === 'linux' ? 'timeout 30 ' : ''}${engine} rm -f ${container}`;
+      execFile(rmCmd, {
+        shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash'
+      });
+    }
     // Server didn't start, resolve stop promise
     this._stopServer = Promise.resolve();
   }

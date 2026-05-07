@@ -231,7 +231,7 @@ export class WorkspaceSettings extends UserSettings {
   constructor(workingDirectory: string) {
     super(false);
 
-    this._workingDirectory = resolveWorkingDirectory(workingDirectory);
+    this._workingDirectory = resolveWorkingDirectory(workingDirectory, false);
     this.read();
   }
 
