@@ -392,29 +392,35 @@ jobs:
 
       # ───────────────────────────────────────────────
       # Container functionality tests
-      # (all engines run pytest via Jupyter kernel API)
+      # Docker/Podman: nsenter; TinyRange: Jupyter kernel API
       # ───────────────────────────────────────────────
 
-      - name: 'Test: Fix home dir ownership (Docker/Podman)'
+      - name: 'Test: Unit tests inside container via pytest (Docker/Podman)'
         if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
         run: |
-          # The neurodesk-home volume may have files owned by the image's
-          # default UID (1000) while NB_UID remapped jovyan to the
-          # runner's UID (1001 on GitHub Actions).
-          ${{ matrix.cfg.engine }} exec \
-            "${{ steps.container.outputs.container }}" \
-            chown -R jovyan:jovyan /home/jovyan
+          ENGINE="${{ matrix.cfg.engine }}"
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
 
-      - name: 'Test: Unit tests inside container via pytest'
+          # Get container's init PID for nsenter
+          CONTAINER_PID=$($ENGINE inspect --format '{{.State.Pid}}' "$CONTAINER_NAME")
+          echo "Container PID: $CONTAINER_PID"
+
+          # Use nsenter to enter the container's full namespace (inherits
+          # AppArmor profile, unlike docker exec on Ubuntu 24.04).
+          # Fix .cache ownership first, then run pytest as jovyan.
+          sudo nsenter -t "$CONTAINER_PID" -m -u -i -n -p -- \
+            bash -c '
+              chown -R jovyan:jovyan /home/jovyan/.cache 2>/dev/null || true
+              su jovyan -s /bin/bash -c "export PATH=/opt/conda/bin:\$PATH; pytest /opt/tests/ -v"
+            '
+
+      - name: 'Test: Pytest suite via Jupyter kernel (TinyRange)'
+        if: matrix.cfg.engine == 'tinyrange'
         run: |
           PORT=${{ steps.container.outputs.port }}
           TOKEN=${{ steps.container.outputs.token }}
           BASE_URL="http://127.0.0.1:${PORT}"
 
-          # Run pytest via Jupyter kernel API so tests inherit the
-          # correct AppArmor profile. docker exec doesn't inherit the
-          # container's AppArmor profile on Ubuntu 24.04, causing
-          # setgroups permission denied errors.
           TEST_FILES=$(python3 scripts/jupyter_exec.py \
             --url "$BASE_URL" \
             --token "$TOKEN" \
@@ -435,14 +441,13 @@ jobs:
             if ! python3 scripts/jupyter_exec.py \
               --url "$BASE_URL" \
               --token "$TOKEN" \
-              --pytest "$T"; then
+              --pytest "$T" \
+              --quiet; then
               FAILED=1
             fi
           done <<< "$TEST_FILES"
 
-          if [ $FAILED -ne 0 ]; then
-            exit 1
-          fi
+          if [ $FAILED -ne 0 ]; then exit 1; fi
           echo 'PASS: All unit tests passed'
 
       # ───────────────────────────────────────────────
