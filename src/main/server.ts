@@ -26,7 +26,21 @@ import { ProgressView } from './progressview/progressview';
 const BASE_CONTAINER_NAME = 'neurodeskapp';
 
 const SERVER_LAUNCH_TIMEOUT = 40 * 60000; // milliseconds
+const JUPYTER_STARTUP_TIMEOUT = 10 * 60000; // 10 min for Jupyter to start after container is up
 const SERVER_RESTART_LIMIT = 1; // max server restarts
+
+function waitForDeadline(deadline: { value: number }): Promise<boolean> {
+  return new Promise(resolve => {
+    const check = () => {
+      if (Date.now() >= deadline.value) {
+        resolve(false);
+      } else {
+        setTimeout(check, 1000);
+      }
+    };
+    check();
+  });
+}
 
 function createTempFile(
   fileName = 'temp',
@@ -105,7 +119,9 @@ export function resolveContainerName(engineType: EngineType): string {
   const rmCmd =
     process.platform === 'win32'
       ? `${engineType} rm -f ${BASE_CONTAINER_NAME} >NUL 2>&1`
-      : `${isLinux ? 'timeout 30 ' : ''}${engineType} rm -f ${BASE_CONTAINER_NAME} &>/dev/null`;
+      : `${
+          isLinux ? 'timeout 30 ' : ''
+        }${engineType} rm -f ${BASE_CONTAINER_NAME} &>/dev/null`;
   try {
     execSync(rmCmd, { encoding: 'utf-8', timeout: 35000 });
   } catch {
@@ -253,7 +269,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   let removeCmd = `${
     isWin
       ? `${engineType} container exists ${containerName} >NUL 2>&1 && ${engineType} rm -f ${containerName} >NUL 2>&1`
-      : `${engineType} container exists ${containerName} &> /dev/null && ${isLinux ? 'timeout 30 ' : ''}${engineType} rm -f ${containerName} &> /dev/null`
+      : `${engineType} container exists ${containerName} &> /dev/null && ${
+          isLinux ? 'timeout 30 ' : ''
+        }${engineType} rm -f ${containerName} &> /dev/null`
   }`;
   let stopCmd = `${
     isPodman
@@ -262,7 +280,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       ? ``
       : isWin
       ? `${engineType} rm -f ${containerName} >NUL 2>&1`
-      : `${isLinux ? 'timeout 30 ' : ''}${engineType} rm -f ${containerName} &> /dev/null`
+      : `${
+          isLinux ? 'timeout 30 ' : ''
+        }${engineType} rm -f ${containerName} &> /dev/null`
   }`;
 
   let script: string;
@@ -347,7 +367,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         else
           ${stopCmd}
           ${volumeCreate}
-          ${isLinux ? 'timeout 300 ' : ''}${engineType} pull docker.io/${imageRegistry}
+          ${
+            isLinux ? 'timeout 300 ' : ''
+          }${engineType} pull docker.io/${imageRegistry}
           CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
         fi
@@ -504,10 +526,9 @@ async function checkIfUrlExists(url: URL): Promise<boolean> {
       resolve(r.statusCode! >= 200 && r.statusCode! < 400);
       log.debug(`Checking if ${url} exists... ${r.statusCode}`);
     });
-    req.setTimeout(10000, () => {
-      req.destroy();
-      resolve(false);
-    });
+    // No per-request timeout — the outer waitForDeadline in Promise.race
+    // handles the overall timeout. This allows slow NFS-backed servers
+    // to respond without being cut off by an arbitrary request timeout.
     req.on('error', function (err) {
       resolve(false);
     });
@@ -641,9 +662,11 @@ export class JupyterServer {
 
         this._nbServer = execFile(launchScriptPath, execOptions);
 
+        const deadline = { value: Date.now() + SERVER_LAUNCH_TIMEOUT };
+
         Promise.race([
           waitUntilServerIsUp(this._info.url),
-          waitForDuration(SERVER_LAUNCH_TIMEOUT)
+          waitForDeadline(deadline)
         ])
           .then((up: boolean) => {
             if (up) {
@@ -675,6 +698,18 @@ export class JupyterServer {
           stdoutChunks = stdoutChunks.concat(data);
           if (this._progressView) {
             this._progressView.setChildProcessLog(data);
+          }
+          // When container starts, extend deadline for Jupyter startup
+          if (data.includes('[neurodesk-app] Container started:')) {
+            const newDeadline = Date.now() + JUPYTER_STARTUP_TIMEOUT;
+            if (newDeadline > deadline.value) {
+              log.info(
+                `Container started — extending timeout by ${
+                  JUPYTER_STARTUP_TIMEOUT / 60000
+                } min for Jupyter startup`
+              );
+              deadline.value = newDeadline;
+            }
           }
         });
 
@@ -880,7 +915,9 @@ export class JupyterServer {
       const rmCmd =
         process.platform === 'win32'
           ? `${engine} rm -f ${container}`
-          : `${process.platform === 'linux' ? 'timeout 30 ' : ''}${engine} rm -f ${container}`;
+          : `${
+              process.platform === 'linux' ? 'timeout 30 ' : ''
+            }${engine} rm -f ${container}`;
       execFile(rmCmd, {
         shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash'
       });
