@@ -110,7 +110,7 @@ jobs:
           echo "Using dist/win-unpacked/ directly (no installer needed)"
 
       - name: Install websocket client
-        ìf: matrix.cfg.engine == 'tinyrange'
+        if: matrix.cfg.engine == 'tinyrange'
         run: |
           python3 -m pip install --upgrade --break-system-packages --user websocket-client requests
 
