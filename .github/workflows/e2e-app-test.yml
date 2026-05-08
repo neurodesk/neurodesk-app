@@ -408,7 +408,7 @@ jobs:
           # Also pre-create subdirs that tests may need (e.g. datalad) so they're
           # owned by jovyan before pytest runs.
           $ENGINE exec -u root "$CONTAINER_NAME" \
-            chown -R jovyan:jovyan /home/jovyan
+            bash -c 'mkdir -p /home/jovyan/.cache/datalad && chown -R jovyan:jovyan /home/jovyan'
 
           $ENGINE exec -u jovyan "$CONTAINER_NAME" \
             pytest /opt/tests/ -v
