@@ -323,6 +323,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   } else {
     if (isTinyRange) {
       script = `
+        umask 000
         ${launchCmd}
         `;
     } else {

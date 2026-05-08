@@ -42,13 +42,25 @@ def _make_msg(msg_type, content, session):
 def run(url, token, code, timeout=1800, quiet_on_success=False):
     headers = {'Authorization': f'token {token}'}
 
-    r = requests.post(
-        f'{url}/api/kernels',
-        headers=headers,
-        json={'name': 'python3'},
-        timeout=30
-    )
-    r.raise_for_status()
+    for attempt in range(3):
+        try:
+            r = requests.post(
+                f'{url}/api/kernels',
+                headers=headers,
+                json={'name': 'python3'},
+                timeout=60
+            )
+            r.raise_for_status()
+            break
+        except requests.exceptions.Timeout:
+            if attempt == 2:
+                raise
+            print(
+                f'[jupyter_exec] kernel creation timed out, retrying ({attempt + 1}/3)...',
+                file=sys.stderr,
+                flush=True
+            )
+            time.sleep(5)
     kernel_id = r.json()['id']
     print(f'[jupyter_exec] created kernel {kernel_id}', file=sys.stderr, flush=True)
 
@@ -216,18 +228,40 @@ def main():
         action='store_true',
         help='Suppress output when execution succeeds (exit code 0)'
     )
+    ap.add_argument(
+        '--ignore',
+        action='append',
+        default=[],
+        metavar='PATH',
+        help='Pass --ignore=PATH to pytest (repeatable)'
+    )
     args = ap.parse_args()
 
     if args.pytest:
+        pytest_args = [args.pytest, '-v']
+        for ign in args.ignore:
+            pytest_args.append(f'--ignore={ign}')
         code = (
-            'import subprocess, sys\n'
-            'subprocess.run(["sudo", "chown", "-R", "jovyan:jovyan", "/home/jovyan/.cache"], check=False)\n'
+            'import os, subprocess, sys\n'
+            'os.umask(0)\n'
+            'subprocess.run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", "/home/jovyan/.cache"], check=False)\n'
+            'subprocess.run(["sudo", "find", "/neurodesktop-storage", "-not", "-type", "s", "-exec", "chmod", "777", "{}", "+"], check=False)\n'
+            '# Monkey-patch os.makedirs: 9p/virtfs ignores guest umask,\n'
+            '# so newly created dirs may lack write permission.\n'
+            '_orig_makedirs = os.makedirs\n'
+            'def _fixed_makedirs(name, mode=0o777, exist_ok=False):\n'
+            '    _orig_makedirs(name, mode=mode, exist_ok=exist_ok)\n'
+            '    try:\n'
+            '        os.chmod(name, 0o777)\n'
+            '    except OSError:\n'
+            '        subprocess.run(["sudo", "chmod", "777", str(name)], check=False)\n'
+            'os.makedirs = _fixed_makedirs\n'
             'try:\n'
             '    import nest_asyncio; nest_asyncio.apply()\n'
             'except ImportError:\n'
             '    pass\n'
             'import pytest\n'
-            f'sys.exit(pytest.main([{args.pytest!r}, "-v"]))\n'
+            f'sys.exit(pytest.main({pytest_args!r}))\n'
         )
     else:
         code = args.code
