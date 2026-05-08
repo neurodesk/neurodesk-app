@@ -390,6 +390,8 @@ jobs:
             ${{ matrix.cfg.engine }} logs "${{ steps.container.outputs.container }}" 2>&1 || true
           fi
           exit 1
+        
+          sleep 10
 
       # ───────────────────────────────────────────────
       # Container functionality tests
