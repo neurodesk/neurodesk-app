@@ -247,12 +247,21 @@ def main():
         metavar='PATH',
         help='Pass --ignore=PATH to pytest (repeatable)'
     )
+    ap.add_argument(
+        '-k',
+        dest='keyword_expr',
+        default=None,
+        help='Pass -k EXPRESSION to pytest for test selection'
+    )
     args = ap.parse_args()
 
     if args.pytest:
         pytest_args = [args.pytest, '-v']
         for ign in args.ignore:
             pytest_args.append(f'--ignore={ign}')
+        if args.keyword_expr:
+            pytest_args.append('-k')
+            pytest_args.append(args.keyword_expr)
         code = (
             'import os, subprocess, sys\n'
             'os.umask(0)\n'
