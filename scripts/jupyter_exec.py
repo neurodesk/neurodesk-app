@@ -76,7 +76,19 @@ def run(url, token, code, timeout=1800, quiet_on_success=False):
     try:
         ws_url = url.replace('https://', 'wss://').replace('http://', 'ws://')
         ws_url = f'{ws_url}/api/kernels/{kernel_id}/channels?token={token}'
-        ws = websocket.create_connection(ws_url, timeout=30)
+        for attempt in range(3):
+            try:
+                ws = websocket.create_connection(ws_url, timeout=60)
+                break
+            except (websocket.WebSocketTimeoutException, websocket.WebSocketException, ConnectionError) as e:
+                if attempt == 2:
+                    raise
+                print(
+                    f'[jupyter_exec] WebSocket connection failed, retrying ({attempt + 1}/3)...',
+                    file=sys.stderr,
+                    flush=True
+                )
+                time.sleep(5)
 
         try:
             # Wait for kernel to reach idle state via WebSocket iopub
