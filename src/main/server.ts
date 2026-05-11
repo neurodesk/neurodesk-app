@@ -196,7 +196,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
     `-e GRANT_SUDO=yes`,
     isWin
-      ? `-v ${neurodesktopStorageDir}:/neurodesktop-storage`
+      ? `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
   ];
 
