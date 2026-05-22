@@ -3,8 +3,10 @@ import { EventTypeMain, EventTypeRenderer } from '../eventtypes';
 const { contextBridge, ipcRenderer } = require('electron');
 
 type WorkingDirectorySelectedListener = (path: string) => void;
+type StorageDirectorySelectedListener = (path: string) => void;
 
 let onWorkingDirectorySelectedListener: WorkingDirectorySelectedListener;
+let onStorageDirectorySelectedListener: StorageDirectorySelectedListener;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getAppConfig: () => {
@@ -81,12 +83,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   setCtrlWBehavior: (behavior: string) => {
     ipcRenderer.send(EventTypeMain.SetCtrlWBehavior, behavior);
+  },
+  selectStorageDirectory: () => {
+    ipcRenderer.send(EventTypeMain.SelectStorageDirectory);
+  },
+  onStorageDirectorySelected: (callback: StorageDirectorySelectedListener) => {
+    onStorageDirectorySelectedListener = callback;
+  },
+  setStorageDirectory: (path: string) => {
+    ipcRenderer.send(EventTypeMain.SetStorageDirectory, path);
   }
 });
 
 ipcRenderer.on(EventTypeRenderer.WorkingDirectorySelected, (event, path) => {
   if (onWorkingDirectorySelectedListener) {
     onWorkingDirectorySelectedListener(path);
+  }
+});
+
+ipcRenderer.on(EventTypeRenderer.StorageDirectorySelected, (event, path) => {
+  if (onStorageDirectorySelectedListener) {
+    onStorageDirectorySelectedListener(path);
   }
 });
 

@@ -34,6 +34,8 @@ export enum EventTypeMain {
   LaunchAboutJupyterPage = 'launch-about-jupyter-page',
   SelectWorkingDirectory = 'select-working-directory',
   SetDefaultWorkingDirectory = 'set-default-working-directory',
+  SelectStorageDirectory = 'select-storage-directory',
+  SetStorageDirectory = 'set-storage-directory',
   ValidateRemoteServerUrl = 'validate-remote-server-url',
   SetEngineType = 'set-engine-type',
   SetStartupMode = 'set-startup-mode',
@@ -57,6 +59,7 @@ export enum EventTypeMain {
 // events sent to Renderer process
 export enum EventTypeRenderer {
   WorkingDirectorySelected = 'working-directory-selected',
+  StorageDirectorySelected = 'storage-directory-selected',
   ShowChildProcressLog = 'show-child-process-log',
   ShowProgress = 'show-progress',
   UpdateRecentRemoteURLs = 'update-recent-remote-urls',

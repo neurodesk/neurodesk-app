@@ -102,6 +102,7 @@ export interface ILaunchScriptParams {
   osVersion: string;
   containerName?: string;
   isNfsWorkingDirectory?: boolean;
+  storageDirectory?: string;
 }
 
 /**
@@ -161,9 +162,14 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const isTinyRange = engineType === EngineType.TinyRange;
   const isDocker = engineType === EngineType.Docker;
   const CVMFS_DISABLE = cvmfsMode === 'true';
-  const neurodesktopStorageDir = isWin
+  const defaultStorageDir = isWin
     ? 'C://neurodesktop-storage'
     : '~/neurodesktop-storage';
+  const neurodesktopStorageDir = params.storageDirectory
+    ? isWin
+      ? params.storageDirectory.replace(/\\/g, '//')
+      : params.storageDirectory
+    : defaultStorageDir;
   const containerName = params.containerName || BASE_CONTAINER_NAME;
 
   let resolvedWorkingDir = '';
@@ -221,7 +227,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       isPodman
         ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
         : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
-      `--add-host=host.docker.internal:host-gateway -e OLLAMA_HOST="http://host.docker.internal:11434"`,
+      `--add-host=host.docker.internal:${
+        isWin ? '!HOST_GATEWAY_IP!' : '${HOST_GATEWAY_IP}'
+      } -e OLLAMA_HOST="http://host.docker.internal:11434"`,
       parseInt(osVersion) >= 2310 && isDocker
         ? '--security-opt apparmor=neurodeskapp'
         : ''
@@ -287,6 +295,43 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
 
   let script: string;
 
+  // Resolve HOST_GATEWAY_IP: use 'host-gateway' if supported, otherwise resolve the actual IP.
+  // Podman only added 'host-gateway' support in v4.1.0.
+  // On macOS/Windows, Podman runs in a VM so host-gateway does not reliably resolve to the host.
+  // We always resolve the actual gateway IP for Podman on macOS/Windows.
+  const hostGatewayResolveWin = isTinyRange
+    ? ''
+    : `
+        SET HOST_GATEWAY_IP=host-gateway
+        ${
+          isPodman
+            ? `REM Windows: Podman runs in a VM, host-gateway does not reliably resolve to the Windows host
+        FOR /F "tokens=2 delims=:" %%i IN ('ipconfig ^| findstr /C:"Default Gateway" ^| findstr /R "[0-9]"') DO (
+          FOR /F "tokens=1" %%g IN ("%%i") DO SET HOST_GATEWAY_IP=%%g
+        )`
+            : ''
+        }`;
+
+  const hostGatewayResolveUnix = isTinyRange
+    ? ''
+    : `
+        HOST_GATEWAY_IP="host-gateway"
+        ${
+          isPodman
+            ? isLinux
+              ? `PODMAN_VER=$(${engineType} --version 2>/dev/null | awk '{print $3}')
+        PODMAN_MAJOR=$(echo "$PODMAN_VER" | cut -d. -f1)
+        PODMAN_MINOR=$(echo "$PODMAN_VER" | cut -d. -f2)
+        if [ "$PODMAN_MAJOR" -lt 4 ] 2>/dev/null || { [ "$PODMAN_MAJOR" -eq 4 ] && [ "$PODMAN_MINOR" -lt 1 ]; } 2>/dev/null; then
+          HOST_GATEWAY_IP=$(ip route | grep default | awk '{print $3}' | head -1)
+          echo "[neurodesk-app] Podman $PODMAN_VER does not support host-gateway, using resolved IP: $HOST_GATEWAY_IP"
+        fi`
+              : `# macOS: Podman runs in a VM, host-gateway does not reliably resolve to the macOS host
+        HOST_GATEWAY_IP=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+        echo "[neurodesk-app] macOS Podman: using resolved gateway IP: $HOST_GATEWAY_IP"`
+            : ''
+        }`;
+
   if (isWin) {
     if (isTinyRange) {
       script = `
@@ -298,6 +343,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         setlocal enabledelayedexpansion
         SET ERRORCODE=0
         SET IMAGE_EXISTS=
+        ${hostGatewayResolveWin}
         where ${engineType} >nul 2>nul
           if %ERRORLEVEL% neq 0 (
               echo "${engineType} command not found, running ${launchCmd}"
@@ -328,6 +374,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         `;
     } else {
       script = `
+        ${hostGatewayResolveUnix}
+        echo $HOST_GATEWAY_IP
         echo "[neurodesk-app] Launch script started at $(date -Iseconds)"
         echo "[neurodesk-app] Engine: ${engineType}"
         echo "[neurodesk-app] Working directory: ${
@@ -442,9 +490,15 @@ function createLaunchScript(
       .slice(0, 4);
   }
 
+  const storageDir =
+    userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
+    (process.platform === 'win32'
+      ? 'C:/neurodesktop-storage'
+      : path.join(os.homedir(), 'neurodesktop-storage'));
+
   const isTinyRange = engineType === EngineType.TinyRange;
   if (isTinyRange) {
-    const buildDir = path.join(os.homedir(), 'neurodesktop-storage', 'build');
+    const buildDir = path.join(storageDir, 'build');
     if (fs.existsSync(buildDir)) {
       fs.rmSync(path.join(buildDir, 'persist'), {
         recursive: true,
@@ -505,7 +559,8 @@ function createLaunchScript(
     tinyrangePath,
     osVersion,
     containerName,
-    isNfsWorkingDirectory
+    isNfsWorkingDirectory,
+    storageDirectory: storageDir
   });
 
   const ext = isWin ? 'bat' : 'sh';
@@ -522,16 +577,31 @@ function createLaunchScript(
 
 async function checkIfUrlExists(url: URL): Promise<boolean> {
   return new Promise<boolean>(resolve => {
+    let resolved = false;
+    const done = (result: boolean) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(result);
+      }
+    };
+
     const requestFn = url.protocol === 'https:' ? httpsRequest : httpRequest;
     const req = requestFn(url, function (r) {
-      resolve(r.statusCode! >= 200 && r.statusCode! < 400);
+      // Consume response body to free the socket
+      r.resume();
+      done(r.statusCode! >= 200 && r.statusCode! < 400);
       log.debug(`Checking if ${url} exists... ${r.statusCode}`);
     });
-    // No per-request timeout — the outer waitForDeadline in Promise.race
-    // handles the overall timeout. This allows slow NFS-backed servers
-    // to respond without being cut off by an arbitrary request timeout.
     req.on('error', function (err) {
-      resolve(false);
+      done(false);
+    });
+    // Per-request timeout: if a single request hangs (e.g. TCP connected
+    // but no HTTP response), abort it so polling can continue.
+    // The outer waitForDeadline still controls the overall timeout.
+    req.setTimeout(10000, () => {
+      log.debug(`checkIfUrlExists: request to ${url} timed out`);
+      req.destroy();
+      done(false);
     });
     req.end();
   });

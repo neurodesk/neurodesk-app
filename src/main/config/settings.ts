@@ -57,6 +57,7 @@ export enum SettingType {
   showNewsFeed = 'showNewsFeed',
   cvmfsMode = 'cvmfsMode',
   defaultWorkingDirectory = 'defaultWorkingDirectory',
+  neurodesktopStorageDirectory = 'neurodesktopStorageDirectory',
   serverArgs = 'serverArgs',
   overrideDefaultServerArgs = 'overrideDefaultServerArgs',
   serverEnvVars = 'serverEnvVars',
@@ -142,6 +143,7 @@ export class UserSettings {
       syncJupyterLabTheme: new Setting<boolean>(true),
 
       defaultWorkingDirectory: new Setting<string>(''),
+      neurodesktopStorageDirectory: new Setting<string>(''),
       serverArgs: new Setting<string>('', { wsOverridable: true }),
       overrideDefaultServerArgs: new Setting<boolean>(false, {
         wsOverridable: true

@@ -228,11 +228,20 @@ namespace SessionWindowManager {
   }
 }
 
+export function getNeurodesktopStoragePath(): string {
+  const custom = userSettings.getValue(
+    SettingType.neurodesktopStorageDirectory
+  );
+  if (custom) {
+    return custom;
+  }
+  return process.platform === 'win32'
+    ? 'C:/neurodesktop-storage'
+    : path.join(app.getPath('home'), 'neurodesktop-storage');
+}
+
 function createNeurodesktopStorage() {
-  const storagePath =
-    process.platform === 'win32'
-      ? 'C:/neurodesktop-storage'
-      : path.join(app.getPath('home'), 'neurodesktop-storage');
+  const storagePath = getNeurodesktopStoragePath();
   if (!fs.existsSync(storagePath)) {
     fs.mkdirSync(storagePath, { recursive: true });
     if (process.platform === 'linux') {
@@ -381,6 +390,9 @@ export class JupyterApplication implements IApplication, IDisposable {
       ),
       defaultWorkingDirectory: userSettings.getValue(
         SettingType.defaultWorkingDirectory
+      ),
+      neurodesktopStorageDirectory: userSettings.getValue(
+        SettingType.neurodesktopStorageDirectory
       ),
       // defaultPythonPath: userSettings.getValue(SettingType.pythonPath),
       logLevel: userSettings.getValue(SettingType.logLevel),
@@ -636,6 +648,42 @@ export class JupyterApplication implements IApplication, IDisposable {
           );
           console.error('Failed to set working directory');
         }
+      }
+    );
+
+    this._evm.registerEventHandler(
+      EventTypeMain.SelectStorageDirectory,
+      event => {
+        const currentPath = getNeurodesktopStoragePath();
+
+        dialog
+          .showOpenDialog({
+            properties: [
+              'openDirectory',
+              'showHiddenFiles',
+              'noResolveAliases'
+            ],
+            buttonLabel: 'Choose',
+            defaultPath: currentPath
+          })
+          .then(({ filePaths }) => {
+            if (filePaths.length > 0) {
+              event.sender.send(
+                EventTypeRenderer.StorageDirectorySelected,
+                filePaths[0]
+              );
+            }
+          });
+      }
+    );
+
+    this._evm.registerEventHandler(
+      EventTypeMain.SetStorageDirectory,
+      (event, dirPath: string) => {
+        userSettings.setValue(
+          SettingType.neurodesktopStorageDirectory,
+          dirPath
+        );
       }
     );
 

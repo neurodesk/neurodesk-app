@@ -37,6 +37,7 @@ export class SettingsDialog {
       // frontEndMode,
       checkForUpdatesAutomatically,
       defaultWorkingDirectory,
+      neurodesktopStorageDirectory,
       logLevel,
       serverArgs,
       // overrideDefaultServerArgs,
@@ -234,6 +235,21 @@ export class SettingsDialog {
 
             <jp-tab-panel id="tab-panel-server">
               <div class="row" style="line-height: 30px;">
+                <label>Neurodesk storage directory</label>
+              </div>
+              <div class="row">
+                <div style="flex-grow: 1;">
+                  <jp-text-field type="text" id="storage-directory" value="<%= neurodesktopStorageDirectory %>" style="width: 100%;" spellcheck="false" placeholder="<%= defaultStoragePlaceholder %> (default)"></jp-text-field>
+                </div>
+                <div>
+                  <jp-button id='select-storage-directory' onclick='handleSelectStorageDirectory(this);'>Change</jp-button>
+                </div>
+              </div>
+              <div class="row" style="line-height: 30px; opacity: 0.7; font-size: 12px;">
+                <label>Takes effect on next session</label>
+              </div>
+
+              <div class="row" style="line-height: 30px; margin-top: 10px;">
                 <label>Additional working directory</label>
               </div>
               <div class="row">
@@ -246,6 +262,14 @@ export class SettingsDialog {
               </div>
 
               <script>
+                const storageDirectoryInput = document.getElementById('storage-directory');
+                window.electronAPI.onStorageDirectorySelected((path) => {
+                  storageDirectoryInput.value = path;
+                });
+                function handleSelectStorageDirectory(el) {
+                  window.electronAPI.selectStorageDirectory();
+                }
+
                 const workingDirectoryInput = document.getElementById('working-directory');
                 window.electronAPI.onWorkingDirectorySelected((path) => {
                   workingDirectoryInput.value = path;
@@ -397,6 +421,7 @@ export class SettingsDialog {
 
           window.electronAPI.setCheckForUpdatesAutomatically(autoUpdateCheckCheckbox.checked);
           window.electronAPI.setInstallUpdatesAutomatically(autoInstallCheckbox.checked);
+          window.electronAPI.setStorageDirectory(storageDirectoryInput.value);
           window.electronAPI.setDefaultWorkingDirectory(workingDirectoryInput.value);
           if (workingDirectoryInput.value !== '') {
             window.electronAPI.setServerLaunchArgs(workingDirectoryInput.value);
@@ -433,6 +458,11 @@ export class SettingsDialog {
       installUpdatesAutomatically,
       // frontEndMode,
       defaultWorkingDirectory,
+      neurodesktopStorageDirectory,
+      defaultStoragePlaceholder:
+        process.platform === 'win32'
+          ? 'C:/neurodesktop-storage'
+          : '~/neurodesktop-storage',
       logLevel,
       serverArgs,
       // overrideDefaultServerArgs,
@@ -472,6 +502,7 @@ export namespace SettingsDialog {
     checkForUpdatesAutomatically: boolean;
     installUpdatesAutomatically: boolean;
     defaultWorkingDirectory: string;
+    neurodesktopStorageDirectory: string;
     // defaultPythonPath: string;
     activateTab?: Tab;
     logLevel: LogLevel;
