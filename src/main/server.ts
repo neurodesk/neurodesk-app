@@ -237,11 +237,12 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   }
 
   if (resolvedWorkingDir) {
+    if (isWin) {
+      resolvedWorkingDir = resolvedWorkingDir.replace(/\\/g, '/');
+    }
     launchArgs.push(
       isTinyRange
-        ? `--mount-rw "${
-            isWin ? resolvedWorkingDir.replace(/\\/g, '//') : resolvedWorkingDir
-          }":/data`
+        ? `--mount-rw "${resolvedWorkingDir.replace(/\//g, '//')}":/data`
         : ` --volume "${resolvedWorkingDir}":/data`
     );
   }
