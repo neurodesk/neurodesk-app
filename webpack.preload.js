@@ -32,8 +32,5 @@ module.exports = {
   output: {
     path: path.resolve(__dirname),
     filename: '[name]'
-  },
-  optimization: {
-    minimize: false
   }
 };

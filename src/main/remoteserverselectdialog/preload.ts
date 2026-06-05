@@ -1,4 +1,4 @@
-import { IRecentRemoteURL } from '../config/appdata';
+import type { IRecentRemoteURL } from '../config/appdata';
 import { EventTypeMain, EventTypeRenderer } from '../eventtypes';
 const { contextBridge, ipcRenderer } = require('electron');
 

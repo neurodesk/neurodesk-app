@@ -103,3 +103,14 @@ No test suite is currently configured (`yarn test` exits with error). Verify cha
 ## gstack
 
 Use the /browse skill from gstack for all web browsing, never use mcp**claude-in-chrome**\* tools, and lists the available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-design-review, /design-consultation, /review, /ship, /browse, /qa, /qa-only, /design-review, /setup-browser-cookies, /retro, /investigate, /document-release, /codex, /careful, /freeze, /guard, /unfreeze, /gstack-upgrade
+
+## systematic-debugging
+
+When debugging any bug, test failure, or unexpected behavior, follow the systematic debugging process in `.agents/skills/systematic-debugging/SKILL.md`.
+
+Key rules:
+- NO fixes without root cause investigation first (Phase 1)
+- Complete all four phases: Root Cause Investigation -> Pattern Analysis -> Hypothesis Testing -> Implementation
+- If 3+ fix attempts fail, stop and question the architecture
+- For multi-component systems, add diagnostic instrumentation before proposing fixes
+- Supporting techniques available in `.agents/skills/systematic-debugging/`: root-cause-tracing, defense-in-depth, condition-based-waiting

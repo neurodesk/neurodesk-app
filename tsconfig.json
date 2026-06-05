@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "skipLibCheck": true,
     "declaration": false,
     "noImplicitAny": true,
     "noEmitOnError": true,
@@ -12,7 +13,9 @@
     "lib": ["es2020", "dom"],
     "baseUrl": ".",
     "outDir": "./build/out/main",
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["node", "react"]
   },
-  "include": ["./src/**/*.*"]
+  "include": ["./src/**/*.*"],
+  "exclude": ["src/**/__tests__/**", "src/__mocks__/**"]
 }

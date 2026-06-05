@@ -103,9 +103,7 @@ export class SessionWindow implements IDisposable {
       titleBarStyle: 'hidden',
       frame: process.platform === 'darwin',
       backgroundColor: this._isDarkTheme ? DarkThemeBGColor : LightThemeBGColor,
-      webPreferences: {
-        devTools: false
-      }
+      webPreferences: {}
     });
 
     this._window.setMenuBarVisibility(false);

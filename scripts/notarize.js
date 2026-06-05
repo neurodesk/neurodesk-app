@@ -1,7 +1,7 @@
 /* Based on https://kilianvalkhof.com/2019/electron/notarizing-your-electron-application/ */
 /* Signing and notarizing an Electron app https://til.simonwillison.net/electron/sign-notarize-electron-macos#:~:text=The%20CSC_KEY_PASSWORD%20was%20the%20password,to%20work%20with%20GitHub%20actions. */
 
-const { notarize } = require('electron-notarize');
+const { notarize } = require('@electron/notarize');
 
 exports.default = async function notarizing(context) {
   const { electronPlatformName, appOutDir } = context;
