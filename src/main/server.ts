@@ -275,6 +275,16 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   }`;
   let volumeCreate = `${isPodman ? `${volumeCheck}` : ''}`;
 
+  // Fix ownership of /home/jovyan on the persistent volume before launching.
+  // The volume may have .cache or other dirs owned by root from a previous run
+  // (e.g. when --user=root processes create files before the entrypoint chowns).
+  // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
+  let fixPermissionsCmd = isTinyRange
+    ? ''
+    : isWin
+    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>&1`
+    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
+
   let removeCmd = `${
     isWin
       ? `${engineType} container exists ${containerName} >NUL 2>&1 && ${engineType} rm -f ${containerName} >NUL 2>&1`
@@ -356,12 +366,14 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
             FOR /F "usebackq delims=" %%i IN (\`${engineType} container inspect -f "{{.State.Status}}" ${containerName}\`) DO SET CONTAINER_STATUS=%%i
               ${stopCmd}
               ${volumeCreate}
+              ${fixPermissionsCmd}
               ${launchCmd}
         ) else (
             echo "Image does not exist. Start downloading..."
             ${stopCmd}
             ${volumeCreate}
             ${engineType} pull docker.io/${imageRegistry}
+            ${fixPermissionsCmd}
             ${launchCmd}
         )
         ${engineType} logs -f ${containerName}
@@ -412,6 +424,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
           ${stopCmd}
           ${volumeCreate}
+          ${fixPermissionsCmd}
           CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
         else
@@ -420,6 +433,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
           ${
             isLinux ? 'timeout 300 ' : ''
           }${engineType} pull docker.io/${imageRegistry}
+          ${fixPermissionsCmd}
           CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
         fi
