@@ -407,8 +407,9 @@ jobs:
           # Fix .cache ownership (NB_UID remapping can leave it owned by wrong UID)
           # Also pre-create subdirs that tests may need (e.g. datalad) so they're
           # owned by jovyan before pytest runs.
+          # Exclude cvmfs_cache (FUSE mount with ephemeral files that cause race conditions).
           $ENGINE exec -u root "$CONTAINER_NAME" \
-            bash -c 'mkdir -p /home/jovyan/.cache/datalad && chown -R jovyan:jovyan /home/jovyan'
+            bash -c 'mkdir -p /home/jovyan/.cache/datalad && find /home/jovyan -path /home/jovyan/cvmfs_cache -prune -o -print0 | xargs -0 chown jovyan:jovyan'
 
           $ENGINE exec -u jovyan "$CONTAINER_NAME" \
             pytest /opt/tests/ -v

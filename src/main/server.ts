@@ -279,11 +279,12 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // The volume may have .cache or other dirs owned by root from a previous run
   // (e.g. when --user=root processes create files before the entrypoint chowns).
   // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
+  // Exclude cvmfs_cache which may contain ephemeral files that vanish during traversal.
   let fixPermissionsCmd = isTinyRange
     ? ''
     : isWin
-    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>&1`
-    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
+    ? `${engineType} run --rm --entrypoint sh -v neurodesk-home:/home/jovyan ${imageRegistry} -c "find /home/jovyan -path /home/jovyan/cvmfs_cache -prune -o -exec chown 1000:100 {} + 2>/dev/null" >NUL 2>&1`
+    : `${engineType} run --rm --entrypoint sh -v neurodesk-home:/home/jovyan ${imageRegistry} -c "find /home/jovyan -path /home/jovyan/cvmfs_cache -prune -o -exec chown $(id -u):100 {} + 2>/dev/null" 2>/dev/null || true`;
 
   let removeCmd = `${
     isWin
