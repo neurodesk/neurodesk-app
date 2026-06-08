@@ -279,12 +279,12 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // The volume may have .cache or other dirs owned by root from a previous run
   // (e.g. when --user=root processes create files before the entrypoint chowns).
   // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
-  // Exclude cvmfs_cache which may contain ephemeral files that vanish during traversal.
+  // This runs in a separate container (no FUSE/CVMFS active), so chown -R is safe.
   let fixPermissionsCmd = isTinyRange
     ? ''
     : isWin
-    ? `${engineType} run --rm --entrypoint sh -v neurodesk-home:/home/jovyan ${imageRegistry} -c "find /home/jovyan -path /home/jovyan/cvmfs_cache -prune -o -exec chown 1000:100 {} + 2>/dev/null" >NUL 2>&1`
-    : `${engineType} run --rm --entrypoint sh -v neurodesk-home:/home/jovyan ${imageRegistry} -c "find /home/jovyan -path /home/jovyan/cvmfs_cache -prune -o -exec chown $(id -u):100 {} + 2>/dev/null" 2>/dev/null || true`;
+    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
+    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
   let removeCmd = `${
     isWin
@@ -362,19 +362,18 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
               ${launchCmd}
           )
         FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${imageRegistry} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
+        ${fixPermissionsCmd}
         if "%IMAGE_EXISTS%"=="exists" (
             echo "Image exists. Starting container..."
             FOR /F "usebackq delims=" %%i IN (\`${engineType} container inspect -f "{{.State.Status}}" ${containerName}\`) DO SET CONTAINER_STATUS=%%i
               ${stopCmd}
               ${volumeCreate}
-              ${fixPermissionsCmd}
               ${launchCmd}
         ) else (
             echo "Image does not exist. Start downloading..."
             ${stopCmd}
             ${volumeCreate}
             ${engineType} pull docker.io/${imageRegistry}
-            ${fixPermissionsCmd}
             ${launchCmd}
         )
         ${engineType} logs -f ${containerName}
