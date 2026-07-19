@@ -2,7 +2,8 @@
 
 <!-- STATS_START -->
 
-<iframe title="Neurodesk App downloads stats" src="https://release-stats-graph-five.vercel.app/graph?owner=neurodesk&repo=neurodesk-app&theme=vue&from=2025-01-25" frameborder="0" style="border:0"></iframe>
+<!-- <iframe title="Neurodesk App downloads stats" src="https://release-stats-graph-five.vercel.app/graph?owner=neurodesk&repo=neurodesk-app&theme=vue&from=2025-01-25" frameborder="0" style="border:0"></iframe> -->
+[![Neurodesk App downloads stats](https://release-stats-graph-five.vercel.app/graph?owner=neurodesk&repo=neurodesk-app&theme=vue&from=2025-01-25)](https://github.com/neurodesk/release-stats-graph)
 
 <!-- STATS_END -->
 
