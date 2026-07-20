@@ -70,7 +70,6 @@ Bundled TinyRange is installed to:
 - On macOS: `~/neurodesktop-storage/build`
 - On Linux: `~/neurodesktop-storage/build`
 
-
 ## macOS write permission issues
 
 JLD installers for Windows and Linux create `neurodeskapp` CLI command as part of the installation process. However, macOS application creates this command at first launch and after updates. This command creation might sometimes fail if the user doesn't have the right permissions. This command is created as a symlink at `/usr/local/bin/neurodeskapp`. The symlink points to `/Applications/NeurodeskApp.app/Contents/Resources/app/neurodeskapp` script that launches the desktop application. If you are having issues with running `neurodeskapp` command on macOS. Try these:
@@ -144,7 +143,7 @@ If you see the error "FATAL:setuid_sandbox_host.cc(158)] The SUID sandbox helper
 Trace/breakpoint trap (core dumped)" this is caused by a recent change in Ubuntu 24.04.
 
 A temporary workaround: Create the file /etc/apparmor.d/neurodeskapp
- With this content:
+With this content:
 
 ```
 # This profile allows everything and only exists to give the
