@@ -14,7 +14,6 @@ permissions:
 
 jobs:
   update-homebrew-cask:
-    needs: publish
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
