@@ -60,7 +60,7 @@ jobs:
       - name: Update Homebrew Cask
         if: steps.release-exists.outputs.result == 'true'
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.NEURODESK_GITHUB_TOKEN_ISSUE_AUTOMATION }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           APP_VERSION: ${{ steps.package-info.outputs.version }}
           SHA256_ARM64: ${{ steps.sha256.outputs.sha256_arm64 }}
           SHA256_X64: ${{ steps.sha256.outputs.sha256_x64 }}
