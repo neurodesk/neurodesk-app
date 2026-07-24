@@ -202,6 +202,9 @@ export class SettingsDialog {
                 <jp-radio name="engine-type" value="docker" <%= engineType === 'docker' ? 'checked' : '' %>>Docker</jp-radio>
                 <jp-radio name="engine-type" value="podman" <%= engineType === 'podman' ? 'checked' : '' %>>Podman</jp-radio>
                 <jp-radio name="engine-type" value="tinyrange" <%= engineType === 'tinyrange' ? 'checked' : '' %>>TinyRange</jp-radio>
+                <% if (isWindows) { %>
+                <jp-radio name="engine-type" value="wslc" <%= engineType === 'wslc' ? 'checked' : '' %>>WSL</jp-radio>
+                <% } %>
                 </jp-radio-group>
 
               <jp-radio-group orientation="horizontal">
@@ -448,6 +451,7 @@ export class SettingsDialog {
     `;
     this._pageBody = ejs.render(template, {
       engineType,
+      isWindows: process.platform === 'win32',
       startupMode,
       cvmfsMode,
       theme,

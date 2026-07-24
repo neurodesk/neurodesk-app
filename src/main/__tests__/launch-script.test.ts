@@ -294,6 +294,73 @@ describe('generateLaunchScript', () => {
     });
   });
 
+  // ── WSL tests (Windows only) ──
+
+  function wslParams(overrides: Partial<ILaunchScriptParams> = {}) {
+    return baseParams({
+      engineType: EngineType.WSL,
+      platform: 'win32',
+      ...overrides
+    });
+  }
+
+  describe('WSL engine', () => {
+    it('uses the wslc run command', () => {
+      const script = generateLaunchScript(wslParams());
+      expect(script).toContain('wslc run -d --rm');
+    });
+
+    it('includes --shm-size=1G', () => {
+      const script = generateLaunchScript(wslParams());
+      expect(script).toContain('--shm-size=1G');
+    });
+
+    it('references the fully-qualified docker.io image', () => {
+      const script = generateLaunchScript(wslParams({ tag: '2026-06-04' }));
+      expect(script).toContain('docker.io/vnmd/neurodesktop:2026-06-04');
+    });
+
+    it('includes GRANT_SUDO and CVMFS_DISABLE env vars', () => {
+      const script = generateLaunchScript(wslParams({ cvmfsMode: 'false' }));
+      expect(script).toContain('-e GRANT_SUDO=yes');
+      expect(script).toContain('-e CVMFS_DISABLE=false');
+    });
+
+    it('maps the requested port to 8888', () => {
+      const script = generateLaunchScript(wslParams({ port: 61723 }));
+      expect(script).toContain('-p 127.0.0.1:61723:8888');
+    });
+
+    it('includes the default server launch args', () => {
+      const script = generateLaunchScript(
+        wslParams({ token: 'jlab:srvr:xyz' })
+      );
+      expect(script).toContain("--ServerApp.token='jlab:srvr:xyz'");
+      expect(script).toContain('--ServerApp.port=8888');
+    });
+
+    it('pulls the image and streams logs', () => {
+      const script = generateLaunchScript(wslParams());
+      expect(script).toContain('wslc pull docker.io/vnmd/neurodesktop');
+      expect(script).toContain('wslc logs -f neurodeskapp');
+    });
+
+    it('does not include docker/podman-specific flags', () => {
+      const script = generateLaunchScript(wslParams());
+      expect(script).not.toContain('--privileged');
+      expect(script).not.toContain('--mac-address');
+      expect(script).not.toContain('--add-host');
+    });
+
+    it('mounts the neurodesktop-storage and home volumes', () => {
+      const script = generateLaunchScript(wslParams());
+      expect(script).toContain(
+        '-v C://neurodesktop-storage:/neurodesktop-storage'
+      );
+      expect(script).toContain('-v neurodesk-home:/home/jovyan');
+    });
+  });
+
   // ── Working directory tests ──
 
   describe('working directory', () => {

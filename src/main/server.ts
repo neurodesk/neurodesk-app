@@ -161,6 +161,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const isPodman = engineType === EngineType.Podman;
   const isTinyRange = engineType === EngineType.TinyRange;
   const isDocker = engineType === EngineType.Docker;
+  // WSL is Windows-only and uses the docker-compatible `wslc` CLI.
+  const isWsl = engineType === EngineType.WSL;
   const CVMFS_DISABLE = cvmfsMode === 'true';
   const defaultStorageDir = isWin
     ? 'C://neurodesktop-storage'
@@ -220,6 +222,21 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       `--volume neurodeskHome,${20 * 1024},/home,persist`,
       '--auto-scale'
     ];
+  } else if (isWsl) {
+    // WSL uses the docker-compatible `wslc` CLI (Windows only). Keep the
+    // argument set minimal to match the supported `wslc run` invocation.
+    launchArgs = [
+      `${engineType} run -d --rm`,
+      `--shm-size=1G`,
+      `--user=root`,
+      `--name ${containerName}`,
+      `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
+      `-e NEURODESKTOP_VERSION=${tag}`,
+      `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
+      `-e GRANT_SUDO=yes`,
+      `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/neurodesktop-storage`,
+      `-v neurodesk-home:/home/jovyan`
+    ];
   } else {
     launchArgs = [
       `${engineType} run -d --rm`,
@@ -246,7 +263,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         : ` --volume "${resolvedWorkingDir}":/data`
     );
   }
-  launchArgs.push(imageRegistry);
+  // `wslc` resolves images from Docker Hub, so use the fully-qualified name.
+  launchArgs.push(isWsl ? `docker.io/${imageRegistry}` : imageRegistry);
 
   if (!overrideDefaultServerArgs) {
     launchArgs.push(
@@ -280,11 +298,12 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // (e.g. when --user=root processes create files before the entrypoint chowns).
   // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
   // This runs in a separate container (no FUSE/CVMFS active), so chown -R is safe.
-  let fixPermissionsCmd = isTinyRange
-    ? ''
-    : isWin
-    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
-    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
+  let fixPermissionsCmd =
+    isTinyRange || isWsl
+      ? ''
+      : isWin
+      ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
+      : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
   let removeCmd = `${
     isWin
@@ -311,9 +330,10 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // Podman only added 'host-gateway' support in v4.1.0.
   // On macOS/Windows, Podman runs in a VM so host-gateway does not reliably resolve to the host.
   // We always resolve the actual gateway IP for Podman on macOS/Windows.
-  const hostGatewayResolveWin = isTinyRange
-    ? ''
-    : `
+  const hostGatewayResolveWin =
+    isTinyRange || isWsl
+      ? ''
+      : `
         SET HOST_GATEWAY_IP=host-gateway
         ${
           isPodman
@@ -349,6 +369,17 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       script = `
         setlocal enabledelayedexpansion
         ${launchCmd}
+      `;
+    } else if (isWsl) {
+      // WSL (`wslc`) is docker-compatible but only ever runs on Windows.
+      // Keep the flow minimal: drop any stale container, pull the image
+      // (idempotent — a no-op when already present), launch, then stream logs.
+      script = `
+        setlocal enabledelayedexpansion
+        ${stopCmd}
+        ${engineType} pull docker.io/${imageRegistry}
+        ${launchCmd}
+        ${engineType} logs -f ${containerName}
       `;
     } else {
       script = `
