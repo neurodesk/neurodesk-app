@@ -2,7 +2,7 @@
 
 <!-- STATS_START -->
 
-![v1.13.1](https://img.shields.io/badge/v1.13.1-7345_downloads-blue)
+[![Neurodesk App downloads stats](https://release-stats-graph-five.vercel.app/graph?owner=neurodesk&repo=neurodesk-app&theme=vue&from=2024-01-25)](https://github.com/neurodesk/release-stats-graph)
 
 <!-- STATS_END -->
 

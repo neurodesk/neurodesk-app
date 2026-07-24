@@ -407,8 +407,9 @@ jobs:
           # Fix .cache ownership (NB_UID remapping can leave it owned by wrong UID)
           # Also pre-create subdirs that tests may need (e.g. datalad) so they're
           # owned by jovyan before pytest runs.
+          # Ignore chown errors from ephemeral FUSE/CVMFS files that vanish mid-traversal.
           $ENGINE exec -u root "$CONTAINER_NAME" \
-            bash -c 'mkdir -p /home/jovyan/.cache/datalad && chown -R jovyan:jovyan /home/jovyan'
+            bash -c 'mkdir -p /home/jovyan/.cache/datalad && chown -R jovyan:jovyan /home/jovyan 2>/dev/null; true'
 
           $ENGINE exec -u jovyan "$CONTAINER_NAME" \
             pytest /opt/tests/ -v
@@ -427,7 +428,7 @@ jobs:
             --token "$TOKEN" \
             --pytest /opt/tests/ \
             --ignore /opt/tests/test_slurm.py \
-            -k "not (test_guac_api_connections or test_guac_login_rejects_legacy_default_password or test_vncserver_binds_localhost_only or test_guac_vnc_tunnel or test_guac_rdp_tunnel or test_nbconvert_can_export_pdf or test_opencode_shows_litellm or test_opencode_neurodesk_setup or test_opencode_neurodesk_404 or test_opencode_startup_verbose or test_opencode_rejected_neurodesk_key_points or test_opencode_rejected_neurodesk_key_refreshes or test_opencode_reprompts or test_opencode_brain_researcher_mcp_setup_accept or test_opencode_brain_researcher_mcp_setup_decline or test_opencode_brain_researcher_prompt_skipped)"
+            -k "not (test_guac_api_connections or test_guac_login_rejects_legacy_default_password or test_vncserver_binds_localhost_only or test_guac_vnc_tunnel or test_guac_rdp_tunnel or test_nbconvert_can_export_pdf or test_bash_kernel_executes_via_nbconvert or test_bash_kernel_negative_nonexistent_command or test_opencode_shows_litellm or test_opencode_neurodesk_setup or test_opencode_neurodesk_404 or test_opencode_startup_verbose or test_opencode_rejected_neurodesk_key_points or test_opencode_rejected_neurodesk_key_refreshes or test_opencode_reprompts or test_opencode_brain_researcher_mcp_setup_accept or test_opencode_brain_researcher_mcp_setup_decline or test_opencode_brain_researcher_prompt_skipped)"
 
       # ───────────────────────────────────────────────
       # Shutdown test

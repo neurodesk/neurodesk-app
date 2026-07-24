@@ -1,0 +1,196 @@
+name: Update Homebrew Cask for NeurodeskApp
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-homebrew-cask:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get package info
+        id: package-info
+        run: |
+          echo "version=$(python scripts/get_package_version.py --package_name neurodesk)" >> $GITHUB_OUTPUT
+
+      - name: Check release exists
+        uses: actions/github-script@v8
+        id: release-exists
+        env:
+          APP_VERSION: ${{ steps.package-info.outputs.version }}
+        with:
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: '${{ github.repository_owner }}',
+              repo: '${{ github.repository }}'.split('/')[1]
+            })
+            const tagName = `v${process.env.APP_VERSION}`
+            const releaseWithTag = releases.data.find(release => release.tag_name === tagName && !release.draft && !release.prerelease)
+            return releaseWithTag ? 'true' : 'false'
+          result-encoding: string
+
+      - name: Set up Homebrew
+        if: steps.release-exists.outputs.result == 'true'
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Check if cask exists in homebrew-cask
+        if: steps.release-exists.outputs.result == 'true'
+        id: cask-exists
+        run: |
+          if brew info --cask neurodeskapp &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump existing cask
+        if: steps.release-exists.outputs.result == 'true' && steps.cask-exists.outputs.exists == 'true'
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          APP_VERSION: ${{ steps.package-info.outputs.version }}
+        run: |
+          set -eux
+          brew bump-cask-pr neurodeskapp \
+            --version "${APP_VERSION}" \
+            --no-browse \
+            --no-audit
+
+      - name: Download macOS DMGs and compute SHA256
+        if: steps.release-exists.outputs.result == 'true' && steps.cask-exists.outputs.exists == 'false'
+        id: sha256
+        env:
+          APP_VERSION: ${{ steps.package-info.outputs.version }}
+        run: |
+          set -eux
+          TAG="v${APP_VERSION}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+
+          curl -fSL -o NeurodeskApp-arm64.dmg "${BASE_URL}/NeurodeskApp-Setup-macOS-arm64.dmg"
+          curl -fSL -o NeurodeskApp-x64.dmg "${BASE_URL}/NeurodeskApp-Setup-macOS-x64.dmg"
+
+          echo "sha256_arm64=$(sha256sum NeurodeskApp-arm64.dmg | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "sha256_x64=$(sha256sum NeurodeskApp-x64.dmg | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Create new cask PR
+        if: steps.release-exists.outputs.result == 'true' && steps.cask-exists.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          APP_VERSION: ${{ steps.package-info.outputs.version }}
+          SHA256_ARM64: ${{ steps.sha256.outputs.sha256_arm64 }}
+          SHA256_X64: ${{ steps.sha256.outputs.sha256_x64 }}
+        run: |
+          set -eux
+          gh repo fork Homebrew/homebrew-cask --clone --remote
+          cd homebrew-cask
+
+          git checkout -b "add-neurodeskapp-${APP_VERSION}"
+
+          cat > Casks/n/neurodeskapp.rb << EOF
+          cask "neurodeskapp" do
+            arch arm: "arm64", intel: "x64"
+
+            version "${APP_VERSION}"
+            sha256 arm: "${SHA256_ARM64}", intel: "${SHA256_X64}"
+
+            url "https://github.com/NeuroDesk/neurodesk-app/releases/download/v#{version}/NeurodeskApp-Setup-macOS-#{arch}.dmg"
+            name "NeurodeskApp"
+            desc "Desktop application for neuroscience computing"
+            homepage "https://neurodesk.org/"
+
+            depends_on macos: ">= :catalina"
+
+            app "NeurodeskApp.app"
+
+            zap trash: [
+              "~/Library/Application Support/neurodeskapp",
+              "~/Library/Preferences/org.neurodesk.neurodeskapp.plist",
+              "~/Library/Saved Application State/org.neurodesk.neurodeskapp.savedState",
+            ]
+          end
+          EOF
+
+          git add Casks/n/neurodeskapp.rb
+          git commit -m "Add neurodeskapp ${APP_VERSION}"
+          git push origin "add-neurodeskapp-${APP_VERSION}"
+
+          gh pr create \
+            --repo Homebrew/homebrew-cask \
+            --title "Add neurodeskapp ${APP_VERSION}" \
+            --body "$(cat <<'PR_EOF'
+          **Name:** NeurodeskApp
+          **Description:** Desktop application for neuroscience computing
+          **Homepage:** https://neurodesk.org/
+          **Download:** https://github.com/NeuroDesk/neurodesk-app/releases
+
+          - [x] macOS app (.dmg) with arm64 and x64 support
+          - [x] Open source: https://github.com/NeuroDesk/neurodesk-app
+          PR_EOF
+          )"
+
+      - name: Update custom tap (fallback)
+        if: always() && steps.release-exists.outputs.result == 'true'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          APP_VERSION: ${{ steps.package-info.outputs.version }}
+        run: |
+          set -eux
+          TAG="v${APP_VERSION}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+
+          # Reuse existing DMGs or download fresh
+          if [ ! -f NeurodeskApp-arm64.dmg ]; then
+            curl -fSL -o NeurodeskApp-arm64.dmg "${BASE_URL}/NeurodeskApp-Setup-macOS-arm64.dmg"
+          fi
+          if [ ! -f NeurodeskApp-x64.dmg ]; then
+            curl -fSL -o NeurodeskApp-x64.dmg "${BASE_URL}/NeurodeskApp-Setup-macOS-x64.dmg"
+          fi
+
+          SHA256_ARM64=$(sha256sum NeurodeskApp-arm64.dmg | awk '{print $1}')
+          SHA256_X64=$(sha256sum NeurodeskApp-x64.dmg | awk '{print $1}')
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${{ github.repository_owner }}/homebrew-neurodesk.git" tap
+          cd tap
+
+          mkdir -p Casks
+          cat > Casks/neurodeskapp.rb << EOF
+          cask "neurodeskapp" do
+            arch arm: "arm64", intel: "x64"
+
+            version "${APP_VERSION}"
+            sha256 arm: "${SHA256_ARM64}", intel: "${SHA256_X64}"
+
+            url "https://github.com/NeuroDesk/neurodesk-app/releases/download/v#{version}/NeurodeskApp-Setup-macOS-#{arch}.dmg"
+            name "NeurodeskApp"
+            desc "Desktop application for neuroscience computing"
+            homepage "https://neurodesk.org/"
+
+            depends_on macos: ">= :catalina"
+
+            app "NeurodeskApp.app"
+
+            zap trash: [
+              "~/Library/Application Support/neurodeskapp",
+              "~/Library/Preferences/org.neurodesk.neurodeskapp.plist",
+              "~/Library/Saved Application State/org.neurodesk.neurodeskapp.savedState",
+            ]
+          end
+          EOF
+
+          git config user.name "Neurodesk Desktop Bot"
+          git config user.email "neurodesk-bot@users.noreply.github.com"
+          git add Casks/neurodeskapp.rb
+          git diff --cached --quiet || {
+            git commit -m "Update neurodeskapp to v${APP_VERSION}"
+            git push origin main
+          }

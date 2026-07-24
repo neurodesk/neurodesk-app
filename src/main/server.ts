@@ -237,11 +237,12 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   }
 
   if (resolvedWorkingDir) {
+    if (isWin) {
+      resolvedWorkingDir = resolvedWorkingDir.replace(/\\/g, '/');
+    }
     launchArgs.push(
       isTinyRange
-        ? `--mount-rw "${
-            isWin ? resolvedWorkingDir.replace(/\\/g, '//') : resolvedWorkingDir
-          }":/data`
+        ? `--mount-rw "${resolvedWorkingDir.replace(/\//g, '//')}":/data`
         : ` --volume "${resolvedWorkingDir}":/data`
     );
   }
@@ -273,6 +274,17 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       : `${engineType} volume exists neurodesk-home &> /dev/null || ${engineType} volume create neurodesk-home`
   }`;
   let volumeCreate = `${isPodman ? `${volumeCheck}` : ''}`;
+
+  // Fix ownership of /home/jovyan on the persistent volume before launching.
+  // The volume may have .cache or other dirs owned by root from a previous run
+  // (e.g. when --user=root processes create files before the entrypoint chowns).
+  // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
+  // This runs in a separate container (no FUSE/CVMFS active), so chown -R is safe.
+  let fixPermissionsCmd = isTinyRange
+    ? ''
+    : isWin
+    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
+    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
   let removeCmd = `${
     isWin
@@ -350,6 +362,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
               ${launchCmd}
           )
         FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${imageRegistry} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
+        ${fixPermissionsCmd}
         if "%IMAGE_EXISTS%"=="exists" (
             echo "Image exists. Starting container..."
             FOR /F "usebackq delims=" %%i IN (\`${engineType} container inspect -f "{{.State.Status}}" ${containerName}\`) DO SET CONTAINER_STATUS=%%i
@@ -411,6 +424,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
           ${stopCmd}
           ${volumeCreate}
+          ${fixPermissionsCmd}
           CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
         else
@@ -419,6 +433,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
           ${
             isLinux ? 'timeout 300 ' : ''
           }${engineType} pull docker.io/${imageRegistry}
+          ${fixPermissionsCmd}
           CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
         fi
