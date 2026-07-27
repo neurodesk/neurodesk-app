@@ -503,47 +503,35 @@ describe('generateLaunchScript', () => {
 
   describe('docker run timeout', () => {
     it('wraps docker run with timeout 300 on Linux', () => {
-      const script = generateLaunchScript(
-        baseParams({ platform: 'linux' })
-      );
+      const script = generateLaunchScript(baseParams({ platform: 'linux' }));
       expect(script).toContain('timeout 300');
       expect(script).toMatch(/CONTAINER_ID=\$\(timeout 300\s/);
     });
 
     it('wraps docker pull with timeout 300 on Linux', () => {
-      const script = generateLaunchScript(
-        baseParams({ platform: 'linux' })
-      );
+      const script = generateLaunchScript(baseParams({ platform: 'linux' }));
       expect(script).toContain('timeout 300 docker pull');
     });
 
     it('includes timeout exit code handling on Linux', () => {
-      const script = generateLaunchScript(
-        baseParams({ platform: 'linux' })
-      );
+      const script = generateLaunchScript(baseParams({ platform: 'linux' }));
       expect(script).toContain('LAUNCH_EXIT -eq 124');
       expect(script).toContain('timed out after 300s');
     });
 
     it('does not wrap docker run with timeout on Windows', () => {
-      const script = generateLaunchScript(
-        baseParams({ platform: 'win32' })
-      );
+      const script = generateLaunchScript(baseParams({ platform: 'win32' }));
       expect(script).not.toContain('timeout 300');
     });
 
     it('does not use timeout command on macOS', () => {
-      const script = generateLaunchScript(
-        baseParams({ platform: 'darwin' })
-      );
+      const script = generateLaunchScript(baseParams({ platform: 'darwin' }));
       expect(script).not.toContain('timeout 300');
       expect(script).not.toContain('timeout 30');
     });
 
     it('wraps docker rm -f with timeout 30 on Linux', () => {
-      const script = generateLaunchScript(
-        baseParams({ platform: 'linux' })
-      );
+      const script = generateLaunchScript(baseParams({ platform: 'linux' }));
       expect(script).toContain('timeout 30 docker rm -f');
     });
   });
@@ -576,9 +564,7 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({ storageDirectory: '/mnt/data/nd-storage' })
       );
-      expect(script).toContain(
-        '-v /mnt/data/nd-storage:/neurodesktop-storage'
-      );
+      expect(script).toContain('-v /mnt/data/nd-storage:/neurodesktop-storage');
       expect(script).not.toContain('~/neurodesktop-storage');
     });
 
@@ -615,9 +601,7 @@ describe('generateLaunchScript', () => {
           storageDirectory: '/opt/neuro-storage'
         })
       );
-      expect(script).toContain(
-        '-v /opt/neuro-storage:/neurodesktop-storage'
-      );
+      expect(script).toContain('-v /opt/neuro-storage:/neurodesktop-storage');
     });
   });
 });
