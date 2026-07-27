@@ -376,10 +376,17 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       // (idempotent — a no-op when already present), launch, then stream logs.
       script = `
         setlocal enabledelayedexpansion
+        echo [neurodesk-app] Launch script started
+        echo [neurodesk-app] Engine: ${engineType}
+        echo [neurodesk-app] Container name: ${containerName}
+        echo [neurodesk-app] Port: ${strPort}
         ${stopCmd}
-        ${engineType} pull docker.io/${imageRegistry}
-        ${launchCmd}
-        ${engineType} logs -f ${containerName}
+        echo [neurodesk-app] Pulling image docker.io/${imageRegistry}...
+        ${engineType} pull docker.io/${imageRegistry} 2>&1
+        echo [neurodesk-app] Starting container...
+        ${launchCmd} 2>&1
+        echo [neurodesk-app] Container started: ${containerName}
+        ${engineType} logs -f ${containerName} 2>&1
       `;
     } else {
       script = `
