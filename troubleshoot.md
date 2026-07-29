@@ -15,6 +15,7 @@ Below are detailed information on topics which commonly come up in questions and
 - [Linux docker permission denied](#linux-docker-permission-denied)
 - [Debug Podman on relaunch](#debug-podman-on-relaunch)
 - [FATAL:setuid_sandbox_host.cc(158)](#fatalsetuid_sandbox_hostcc158)
+- [Development build crashes when opening child windows on Ubuntu 24.04](#development-build-crashes-when-opening-child-windows-on-ubuntu-2404)
 - [Running Neurodesk App with Podman on restricted Linux systems](#running-neurodesk-app-with-podman-on-restricted-linux-systems)
 
 ## Settings locations and resetting
@@ -161,6 +162,110 @@ profile neurodeskapp "/opt/NeurodeskApp/neurodeskapp" flags=(unconfined) {
 ```
 
 Then restart your computer. Then try to start the neurodesk app again.
+
+## Development build crashes when opening child windows on Ubuntu 24.04
+
+This affects `yarn start` / `yarn dev` only. The installed `.deb` is not affected.
+
+**Symptoms**
+
+Running from a terminal that is itself AppArmor-confined (the VS Code integrated
+terminal, for example), the app launches normally but dies the moment a child
+window opens — clicking the VNC desktop inside JupyterLab
+(`http://127.0.0.1:<port>/neurodesktop-vnc`) is the usual trigger. `dmesg` shows a
+segfault rather than any application error:
+
+```
+electron[199148]: segfault at 0 ip 000055d48813e5aa sp 00007fff2f1e8c20 error 4 in electron[...]
+```
+
+`~/.config/neurodeskapp/logs/main.log` records only the teardown that follows
+(`child process exited with code null and signal SIGTERM`, then
+`socket hang up`), never the cause — those are the app killing its own container
+on the way down.
+
+Running the same command from an unconfined terminal fails earlier and more
+honestly:
+
+```
+FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:166] The SUID sandbox helper
+binary was found, but is not configured correctly. Rather than run without
+sandboxing I'm aborting now. You need to make sure that
+<repo>/node_modules/electron/dist/chrome-sandbox is owned by root and has mode 4755
+<repo>/node_modules/electron/dist/electron exited with signal SIGTRAP
+```
+
+**Cause**
+
+Same Ubuntu 24.04 restriction as
+[FATAL:setuid_sandbox_host.cc(158)](#fatalsetuid_sandbox_hostcc158) above
+(`kernel.apparmor_restrict_unprivileged_userns = 1`), but the workaround in that
+section does not cover development builds. AppArmor attaches profiles by
+executable path, and `/etc/apparmor.d/neurodeskapp` is scoped to
+`/opt/NeurodeskApp/neurodeskapp`. A development run execs
+`node_modules/electron/dist/electron`, which matches no profile, so it inherits
+whatever label the launching terminal carries. Check it with:
+
+```bash
+cat /proc/$(pgrep -f 'electron \.' | head -1)/attr/current
+```
+
+Expect `unconfined` from a plain terminal, or something like
+`snap.code.code (complain)` from the VS Code integrated terminal — never
+`neurodeskapp`. Without a `userns` grant Chromium falls back to the SUID sandbox
+helper, which ships non-setuid in `node_modules`, so sandbox setup fails.
+
+**Fixes**, best first:
+
+1. Give the development binary its own profile, mirroring the packaged one.
+   Create `/etc/apparmor.d/electron-dev`, substituting your checkout path:
+
+   ```
+   abi <abi/4.0>,
+   include <tunables/global>
+
+   profile electron-dev "/path/to/neurodesk-desktop/node_modules/electron/dist/electron" flags=(unconfined) {
+     userns,
+
+     include if exists <local/electron-dev>
+   }
+   ```
+
+   ```bash
+   sudo apparmor_parser -r /etc/apparmor.d/electron-dev
+   ```
+
+   Re-run the `/proc/.../attr/current` check above; it should now read
+   `electron-dev`. Reapply after changing the checkout path.
+
+2. Configure the SUID sandbox helper the error message asks for:
+
+   ```bash
+   sudo chown root:root node_modules/electron/dist/chrome-sandbox
+   sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+   ```
+
+   Note this is reset by `yarn install` and by any Electron version change, so it
+   has to be redone after either.
+
+3. Disable the sandbox for a single run:
+
+   ```bash
+   yarn start --no-sandbox
+   ```
+
+   Confirmed to make the child-window crash go away. Use it for local debugging
+   only — it turns off the renderer sandbox, and it must never be added to the
+   packaged app or to a shipped launcher.
+
+**Not the cause**, ruled out while diagnosing this, so nobody re-chases them:
+
+- `vaInitialize failed: unknown libva error` and
+  `'--ozone-platform=wayland' is not compatible with Vulkan` — both are non-fatal
+  Chromium fallback warnings, and the working `.deb` emits them too.
+- The Electron version. The packaged app that works runs the same Electron build
+  as the failing development run.
+- `NODE_ENV`. Setting or removing it changes nothing here.
 
 ## Running Neurodesk App with Podman on restricted Linux systems
 
