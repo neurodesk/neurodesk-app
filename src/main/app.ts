@@ -7,11 +7,11 @@ import {
   BrowserWindow,
   dialog,
   MessageBoxOptions,
+  net,
   session,
   shell
 } from 'electron';
 import log from 'electron-log';
-import fetch from 'node-fetch';
 import * as yaml from 'js-yaml';
 import * as semver from 'semver';
 import * as fs from 'fs';
@@ -864,9 +864,14 @@ export class JupyterApplication implements IApplication, IDisposable {
   }
 
   checkForUpdates(showDialog: 'on-new-version' | 'always') {
-    fetch(
-      'https://github.com/NeuroDesk/neurodesk-app/releases/latest/download/latest.yml'
-    )
+    // Electron net.fetch uses the Chromium network stack (handles broken cert
+    // chains, respects system proxy) instead of EOL node-fetch's Node TLS.
+    // cache: no-store prevents serving a stale latest.yml across sessions.
+    net
+      .fetch(
+        'https://github.com/NeuroDesk/neurodesk-app/releases/latest/download/latest.yml',
+        { cache: 'no-store' }
+      )
       .then(async response => {
         try {
           const data = await response.text();

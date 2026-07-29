@@ -2,11 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  BrowserView,
   clipboard,
   dialog,
   Menu,
-  MenuItemConstructorOptions
+  MenuItemConstructorOptions,
+  shell,
+  WebContentsView
 } from 'electron';
 import log from 'electron-log';
 import * as path from 'path';
@@ -15,6 +16,7 @@ import {
   clearSession,
   DarkThemeBGColor,
   isDarkTheme,
+  isSameServerOrigin,
   LightThemeBGColor
 } from '../utils';
 import { SessionWindow } from '../sessionwindow/sessionwindow';
@@ -56,7 +58,7 @@ export class LabView implements IDisposable {
         partition = `partition-${Date.now()}`;
       }
     }
-    this._view = new BrowserView({
+    this._view = new WebContentsView({
       webPreferences: {
         preload: path.join(__dirname, './preload.js'),
         partition
@@ -68,6 +70,7 @@ export class LabView implements IDisposable {
     );
 
     this._registerBrowserEventHandlers();
+    this._registerNavigationGuard();
     this._addFallbackContextMenu();
 
     if (!this._sessionConfig.isRemote) {
@@ -124,7 +127,7 @@ export class LabView implements IDisposable {
     }
   }
 
-  public get view(): BrowserView {
+  public get view(): WebContentsView {
     return this._view;
   }
 
@@ -266,6 +269,11 @@ export class LabView implements IDisposable {
   get labUIReady(): Promise<boolean> {
     return new Promise<boolean>(resolve => {
       const checkIfReady = () => {
+        if (this._isDisposed) {
+          // stop polling on dispose; leave the promise unsettled so a stale
+          // continuation cannot run against an already null labView.
+          return;
+        }
         if (this._labUIReady) {
           resolve(true);
         } else {
@@ -279,21 +287,24 @@ export class LabView implements IDisposable {
     });
   }
 
-  dispose(): Promise<void> {
+  async dispose(): Promise<void> {
+    this._isDisposed = true;
     this._evm.dispose();
 
     // if local or remote with no data persistence, clear session data
     if (
       this._sessionConfig.isRemote &&
-      !this._sessionConfig.persistSessionData
+      !this._sessionConfig.persistSessionData &&
+      !this._parent.window.isDestroyed()
     ) {
-      if (!this._parent.window.isDestroyed()) {
-        return clearSession(this._view.webContents.session);
-      } else {
-        return Promise.resolve();
-      }
-    } else {
-      return clearSession(this._view.webContents.session);
+      await clearSession(this._view.webContents.session);
+    }
+
+    // A WebContentsView's webContents is not destroyed on detach or window
+    // close (electron/electron#42884); close it so the dropped view frees
+    // its renderer.
+    if (!this._view.webContents.isDestroyed()) {
+      this._view.webContents.close();
     }
   }
 
@@ -387,6 +398,52 @@ export class LabView implements IDisposable {
     this._registerWebAppFrontEndHandlers();
   }
 
+  /**
+   * Keep the lab view pinned to the Jupyter server origin. Untrusted notebook
+   * content can trigger a top-level navigation (a link without target=_blank,
+   * for instance), which would otherwise load an attacker page inside the
+   * privileged lab view where the getServerInfo IPC hands out the server URL
+   * and auth token. Anything off-origin goes to the system browser instead.
+   * Server-initiated cross-origin redirects (remote hub OAuth, say) are not
+   * blocked here; the origin check on the IPC itself is the authoritative one.
+   */
+  private _registerNavigationGuard(): void {
+    const isServerOrigin = (url: string): boolean =>
+      isSameServerOrigin(url, this._sessionConfig.url?.href);
+
+    this._view.webContents.on('will-navigate', (event, url) => {
+      if (!isServerOrigin(url)) {
+        event.preventDefault();
+        this._openUrlInExternalBrowser(url);
+      }
+    });
+
+    this._view.webContents.setWindowOpenHandler(({ url }) => {
+      if (isServerOrigin(url)) {
+        return { action: 'allow' };
+      }
+      this._openUrlInExternalBrowser(url);
+      return { action: 'deny' };
+    });
+  }
+
+  private _openUrlInExternalBrowser(url: string): void {
+    try {
+      const { protocol, href } = new URL(url);
+      // http/https for ordinary links, mailto for notebook contact links;
+      // everything else (javascript:, file:, data:) is left unopened.
+      if (
+        protocol === 'https:' ||
+        protocol === 'http:' ||
+        protocol === 'mailto:'
+      ) {
+        shell.openExternal(href);
+      }
+    } catch {
+      // unparseable target, nothing safe to open
+    }
+  }
+
   private async _setJupyterLabTheme(theme: string) {
     const themeName = isDarkTheme(theme)
       ? 'JupyterLab Dark'
@@ -444,12 +501,13 @@ export class LabView implements IDisposable {
     });
   }
 
-  private _view: BrowserView;
+  private _view: WebContentsView;
   private _parent: SessionWindow;
   private _sessionConfig: SessionConfig;
   private _jlabBaseUrl: string;
   private _wsSettings: WorkspaceSettings;
   private _labUIReady = false;
+  private _isDisposed = false;
   private _evm = new EventManager();
 }
 

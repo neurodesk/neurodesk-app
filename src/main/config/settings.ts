@@ -291,14 +291,12 @@ export class WorkspaceSettings extends UserSettings {
       }
     }
 
-    const exists = fs.existsSync(wsSettingsPath);
-    if (Object.keys(wsSettings).length > 0 || exists) {
-      if (!exists) {
-        const dirPath = path.dirname(wsSettingsPath);
-        if (!fs.existsSync(dirPath)) {
-          fs.mkdirSync(dirPath, { recursive: true });
-        }
-      }
+    // Write when there is something to persist, or when a previous file needs
+    // to be cleared. mkdir is unconditional: recursive mode is a no-op when the
+    // directory already exists, and an existsSync guard first only opens a
+    // TOCTOU race (CodeQL js/file-system-race, CWE-367).
+    if (Object.keys(wsSettings).length > 0 || fs.existsSync(wsSettingsPath)) {
+      fs.mkdirSync(path.dirname(wsSettingsPath), { recursive: true });
       fs.writeFileSync(wsSettingsPath, JSON.stringify(wsSettings, null, 2));
     }
   }
