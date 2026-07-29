@@ -52,30 +52,6 @@ export function getSchemasDir(): string {
   return path.normalize(path.join(getAppDir(), './build/schemas'));
 }
 
-export function getBundledPythonInstallDir(): string {
-  // this directory path cannot have any spaces since
-  // conda constructor cannot install to such paths
-  const installDir =
-    process.platform === 'darwin'
-      ? path.normalize(path.join(app.getPath('home'), 'Library', app.getName()))
-      : app.getPath('userData');
-
-  if (!fs.existsSync(installDir)) {
-    try {
-      fs.mkdirSync(installDir, { recursive: true });
-    } catch (error) {
-      log.error(error);
-    }
-  }
-
-  return installDir;
-}
-
-// user data dir for<= 3.5.1-1
-export function getOldUserConfigPath() {
-  return path.join(getBundledPythonInstallDir(), 'jupyterlab-desktop-data');
-}
-
 export function isDarkTheme(themeType: string) {
   if (themeType === 'light') {
     return false;

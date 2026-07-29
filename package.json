@@ -7,7 +7,7 @@
   "main": "./build/out/main/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "NODE_ENV=development yarn build && yarn start",
+    "dev": "NODE_ENV=development yarn build && NODE_ENV=development yarn start",
     "start:windows": "electron . --windows-ui",
     "start:linux": "electron . --linux-ui",
     "start:mac": "electron . --mac-ui",
@@ -104,7 +104,8 @@
           "from": "tinyrange",
           "to": "resources/app/tinyrange"
         }
-      ]
+      ],
+      "icon": "dist-resources/icon.ico"
     },
     "rpm": {
       "appArmorProfile": "electron-builder-scripts/neurodeskapp.apparmor",
@@ -143,7 +144,6 @@
           ]
         }
       ],
-      "icon": "dist-resources/icon.icns",
       "entitlements": "build/entitlements.plist",
       "entitlementsInherit": "build/entitlements.plist",
       "darkModeSupport": true,

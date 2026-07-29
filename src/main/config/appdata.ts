@@ -5,7 +5,6 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { clearSession, getUserDataDir } from '../utils';
 import { SessionConfig } from './sessionconfig';
-import { getOldSettings } from './settings';
 import { session as electronSession } from 'electron';
 import { ISignal, Signal } from '@lumino/signaling';
 
@@ -56,8 +55,6 @@ export class ApplicationData {
   read() {
     const appDataPath = this._getAppDataPath();
     if (!fs.existsSync(appDataPath)) {
-      // TODO: remove after 07/2023
-      this._migrateFromOldSettings();
       return;
     }
     const data = fs.readFileSync(appDataPath);
@@ -114,17 +111,6 @@ export class ApplicationData {
           link: newsItem.link
         });
       }
-    }
-  }
-
-  private _migrateFromOldSettings() {
-    const oldSettings = getOldSettings();
-
-    if (oldSettings.remoteURL) {
-      this.recentRemoteURLs.push({
-        url: oldSettings.remoteURL,
-        date: new Date()
-      });
     }
   }
 
