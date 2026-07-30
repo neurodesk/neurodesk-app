@@ -59,7 +59,6 @@ You can start a new session by using the links at the Start section of the Welco
 - `Open Local Neurodesk..` creates a new session in the default working directory.
 - `Connect...` creates a session by connecting to a remote Neurodesk server.
 
-
 ### Add Custom Data Directory
 
 Neurodesk App stores its data in the following locations:
