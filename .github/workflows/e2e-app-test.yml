@@ -40,6 +40,43 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Warm the local image store while the app downloads/installs.
+      #
+      # server.ts:486 runs `<engine> image inspect <image>` and skips its own pull
+      # when the image is already present. So pre-pulling here does two things:
+      #   1. Overlaps the ~2.5 GB fetch with artifact download + apt + dpkg install
+      #      instead of paying it serially inside the launch script.
+      #   2. Takes the launch script's `timeout 300` pull (server.ts:497) off the
+      #      critical path. That timeout currently turns a slow Docker Hub day into
+      #      a hard run failure rather than a slow run.
+      #
+      # Best-effort by design: if this fails or times out, the app pulls as before.
+      - name: Start container image pre-pull (background)
+        id: prepull
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
+        run: |
+          ENGINE="${{ matrix.cfg.engine }}"
+
+          TAG=$(grep -E '^[[:space:]]*jupyter_neurodesk_version' neurodesktop.toml \
+                | head -1 | cut -d'"' -f2)
+          if [ -z "$TAG" ]; then
+            echo "FAIL: could not read jupyter_neurodesk_version from neurodesktop.toml"
+            exit 1
+          fi
+
+          # Must match server.ts:165 (`vnmd/neurodesktop:${tag}`) exactly, or the
+          # app's image-inspect check misses and it pulls again anyway.
+          SHORT_IMAGE="vnmd/neurodesktop:${TAG}"
+          PULL_IMAGE="docker.io/${SHORT_IMAGE}"
+          LOG="/tmp/prepull.log"
+
+          echo "Pre-pulling $PULL_IMAGE in background..."
+          nohup "$ENGINE" pull "$PULL_IMAGE" > "$LOG" 2>&1 &
+
+          echo "pid=$!" >> "$GITHUB_OUTPUT"
+          echo "short_image=$SHORT_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "log=$LOG" >> "$GITHUB_OUTPUT"
+
       # Try to download pre-built artifact from the calling workflow.
       # If this was triggered via workflow_dispatch (no artifacts), fall back to building.
       - name: Download installer artifact
@@ -97,6 +134,12 @@ jobs:
 
       - name: Install app (macOS)
         if: matrix.cfg.platform == 'mac'
+        env:
+          # Brew's implicit tap auto-update costs 60-90s and buys nothing here:
+          # the runner image ships a recent Homebrew and we want a pinned bottle,
+          # not the newest formula. Cleanup is pointless on an ephemeral runner.
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           brew install qemu
           hdiutil attach dist/NeurodeskApp-arm64.dmg -nobrowse -quiet -mountpoint /Volumes/NeurodeskApp
@@ -162,6 +205,37 @@ jobs:
             mkdir -p "$TEMP/neurodesk-test"
           else
             mkdir -p /tmp/neurodesk-test
+          fi
+
+      # Join the background pre-pull before launching, so the app never races a
+      # half-finished pull. Never fails the job: if the image is not local, the
+      # launch script pulls it on the (slower) original path.
+      - name: Wait for image pre-pull
+        if: steps.prepull.outcome == 'success'
+        run: |
+          ENGINE="${{ matrix.cfg.engine }}"
+          PID="${{ steps.prepull.outputs.pid }}"
+          LOG="${{ steps.prepull.outputs.log }}"
+          SHORT_IMAGE="${{ steps.prepull.outputs.short_image }}"
+
+          echo "Waiting for pre-pull of $SHORT_IMAGE (pid $PID)..."
+          for i in $(seq 1 120); do
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 5
+          done
+
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "WARN: pre-pull still running after 10 min — abandoning it"
+            kill -TERM "$PID" 2>/dev/null || true
+          fi
+
+          echo "=== pre-pull log (last 5 lines) ==="
+          tail -5 "$LOG" 2>/dev/null || echo "(no log)"
+
+          if "$ENGINE" image inspect "$SHORT_IMAGE" >/dev/null 2>&1; then
+            echo "PASS: $SHORT_IMAGE present locally — app launch skips its own pull"
+          else
+            echo "WARN: $SHORT_IMAGE not local — app will pull during launch (slower)"
           fi
 
       - name: Launch app in background
@@ -234,7 +308,9 @@ jobs:
           PORT=""
           TOKEN=""
 
-          for i in $(seq 1 120); do
+          # 5s granularity x 360 attempts keeps the same 30 min ceiling as the
+          # old 15s x 120, but finds a ready backend up to 10s sooner.
+          for i in $(seq 1 360); do
             # Fail fast if the Electron app process has already exited
             if [ "${{ matrix.cfg.platform }}" = "mac" ]; then
               APP_ALIVE=$(pgrep -f "NeurodeskApp.app/Contents/MacOS/NeurodeskApp" >/dev/null 2>&1 && echo 1 || echo 0)
@@ -262,7 +338,7 @@ jobs:
                 # Container name is fixed "neurodeskapp" — get port from published port mapping
                 PORT=$($ENGINE inspect "$CONTAINER" --format '{{range $p, $conf := .NetworkSettings.Ports}}{{range $conf}}{{.HostPort}}{{"\n"}}{{end}}{{end}}' | grep -oE '[0-9]+' | head -1)
                 TOKEN=$($ENGINE inspect "$CONTAINER" --format '{{json .Config.Cmd}}' | grep -oE "jlab:srvr:[a-f0-9]+")
-                echo "Container found: $CONTAINER (port=$PORT) after $((i * 15))s"
+                echo "Container found: $CONTAINER (port=$PORT) after $((i * 5))s"
                 break
               fi
             else
@@ -283,7 +359,7 @@ jobs:
                 if [ -n "$PORT" ] && [ -n "$TOKEN" ]; then
                   STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/lab?token=${TOKEN}" 2>/dev/null || echo "000")
                   if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ] 2>/dev/null; then
-                    echo "TinyRange Jupyter reachable on port $PORT after $((i * 15))s"
+                    echo "TinyRange Jupyter reachable on port $PORT after $((i * 5))s"
                     CONTAINER="tinyrange-vm"
                     break
                   fi
@@ -291,8 +367,8 @@ jobs:
               fi
             fi
 
-            echo "Attempt $i: no backend yet - waiting 15s..."
-            sleep 15
+            echo "Attempt $i: no backend yet - waiting 5s..."
+            sleep 5
           done
 
           if [ -z "$CONTAINER" ] && [ "$ENGINE" != "tinyrange" ]; then

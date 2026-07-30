@@ -32,7 +32,7 @@ If you have an existing Neurodesk App installation, please uninstall it first by
 - [Windows Installer](https://github.com/NeuroDesk/neurodesk-app/releases/latest/download/NeurodeskApp-Setup-Windows.exe)
 
 > :warning: **On Microsoft edge**, follow these steps to download the executable file:
-> ![Microsoft Edge](/Neurodeskapp_Edge_Download.png)
+> ![Microsoft Edge](/media/Neurodeskapp_Edge_Download.png)
 
 ## Launching Neurodesk App
 
@@ -59,9 +59,6 @@ You can start a new session by using the links at the Start section of the Welco
 - `Open Local Neurodesk..` creates a new session in the default working directory.
 - `Connect...` creates a session by connecting to a remote Neurodesk server.
 
-Previously opened sessions are stored as part of application data and they are listed on Welcome Page. Clicking an item in the `Recent sessions` list restores the selected session.
-
-<img src="media/recent-sessions.svg" alt="Start session" width=300 />
 
 ### Add Custom Data Directory
 
