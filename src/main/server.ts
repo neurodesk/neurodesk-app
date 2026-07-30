@@ -25,6 +25,11 @@ import { ProgressView } from './progressview/progressview';
 
 const BASE_CONTAINER_NAME = 'neurodeskapp';
 
+// CVMFS-hosted lmod module tree, bind-mounted into the container on WSL.
+const NEURODESK_MODULES_DIR = '/cvmfs/neurodesk.ardc.edu.au/neurodesk-modules';
+// Sorted after lmod's own /etc/profile.d/z00_lmod.sh so `module` is defined.
+const NEURODESK_MODULES_PROFILE = '/etc/profile.d/z99-neurodesk-modules.sh';
+
 const SERVER_LAUNCH_TIMEOUT = 40 * 60000; // milliseconds
 const JUPYTER_STARTUP_TIMEOUT = 10 * 60000; // 10 min for Jupyter to start after container is up
 const SERVER_RESTART_LIMIT = 1; // max server restarts
@@ -225,6 +230,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   } else if (isWsl) {
     // WSL uses the docker-compatible `wslc` CLI (Windows only). Keep the
     // argument set minimal to match the supported `wslc run` invocation.
+    // CVMFS is mounted on the WSL side and bind-mounted in, so the container
+    // does not need to run its own FUSE mount (hence no --privileged).
     launchArgs = [
       `${engineType} run -d --rm`,
       `--shm-size=1G`,
@@ -234,7 +241,10 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       `-e NEURODESKTOP_VERSION=${tag}`,
       `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
       `-e GRANT_SUDO=yes`,
-      `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/neurodesktop-storage`,
+      `-e NB_UID=1000 -e NB_GID=1000`,
+      `-e SINGULARITY_BINDPATH='/cvmfs,/mnt,/home'`,
+      `-v ${neurodesktopStorageDir}:/neurodesktop-storage`,
+      `-v /cvmfs:/cvmfs`,
       `-v neurodesk-home:/home/jovyan`
     ];
   } else {
@@ -266,7 +276,21 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // `wslc` resolves images from Docker Hub, so use the fully-qualified name.
   launchArgs.push(isWsl ? `docker.io/${imageRegistry}` : imageRegistry);
 
-  if (!overrideDefaultServerArgs) {
+  if (!overrideDefaultServerArgs && isWsl) {
+    // The CVMFS module tree is bind-mounted from WSL, so lmod has to be told
+    // about it. Drop a profile.d snippet (sourced after lmod's own z00 init) so
+    // every JupyterLab terminal sees the modules, and register it in the
+    // current shell too so the server — and therefore notebook kernels —
+    // inherits MODULEPATH.
+    const serverCmd = serverLaunchArgsDefault
+      .map(arg =>
+        arg.replace('{token}', token).replace('{port}', containerJupyterPort)
+      )
+      .join(' ');
+    launchArgs.push(
+      `bash -lc "echo '[ -d ${NEURODESK_MODULES_DIR} ] && module use ${NEURODESK_MODULES_DIR}/*' > ${NEURODESK_MODULES_PROFILE}; . ${NEURODESK_MODULES_PROFILE}; exec ${serverCmd}"`
+    );
+  } else if (!overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
         ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R "$(id -u)":"$(id -g)" /neurodesktop-storage; chmod -R 777 /neurodesktop-storage; chown -R "$(id -u)":"$(id -g)" /data; chmod -R 777 /data;`
@@ -1300,7 +1324,7 @@ export class JupyterServerFactory implements IServerFactory, IDisposable {
       this._removeFailedServer(item.factoryId);
     });
 
-    log.debug('~ createServer ~ ', item);
+    // log.debug('~ createServer ~ ', item);
     return item;
   }
 
