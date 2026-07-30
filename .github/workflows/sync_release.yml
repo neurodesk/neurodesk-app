@@ -41,39 +41,13 @@ jobs:
         shell: bash
         run: |
           set -eux
-          export NEURODESK_LATEST=$(python scripts/get_neurodesk_version.py)
+          NEURODESK_LATEST=$(python scripts/get_neurodesk_version.py)
+          if [[ -z "${NEURODESK_LATEST}" || "${NEURODESK_LATEST}" == "None" ]]; then
+            echo "Could not determine the latest Neurodesk version (got '${NEURODESK_LATEST}')" >&2
+            exit 1
+          fi
           echo "neurodesk_latest=${NEURODESK_LATEST}" >> $GITHUB_ENV
           yarn set_neurodesk_version ${NEURODESK_LATEST}
-      - name: Check for new TinyRange releases
-        shell: bash
-        run: |
-          set -eux
-          export TINYRANGE_LATEST=$(python scripts/get_tinyrange_version.py)
-          echo "tinyrange_latest=${TINYRANGE_LATEST}" >> $GITHUB_ENV
-          yarn set_tinyrange_version ${TINYRANGE_LATEST}
-      - name: Create a PR if needed
-        shell: bash
-        env:
-          GITHUB_USER: ${{ secrets.GITHUB_USER }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -eux
-          # if resulted in any change:
-          export TINYRANGE_LATEST=${{ env.tinyrange_latest }}
-          if [[ ! -z "$(git status --porcelain package.json)" ]]; then
-            export BRANCH_NAME=update-tinyrange-to-v${TINYRANGE_LATEST}
-            # this will fail if the branch already exists which means we won't have duplicate PRs
-            git checkout -b "${BRANCH_NAME}"
-            git config user.name "Neurodesk Desktop Bot"
-            git config user.email 'neurodesk-bot@users.noreply.github.com'
-
-            git commit . -m "Update to TinyRange v${TINYRANGE_LATEST}"
-
-            git push --set-upstream origin "${BRANCH_NAME}"            
-            sudo apt install hub
-            hub pull-request -m "Update to TinyRange v${TINYRANGE_LATEST}" \
-                -m "New TinyRange release [v${TINYRANGE_LATEST}](https://github.com/tinyrange/tinyrange/releases/tag/v${TINYRANGE_LATEST}) is available. Please review the lock file carefully.".
-          fi
 
       - name: Create a PR if needed
         shell: bash
@@ -82,19 +56,30 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
-          # if resulted in any change:
-          export NEURODESK_LATEST=${{ env.neurodesk_latest }}
-          if [[ ! -z "$(git status --porcelain neurodesktop.toml)" ]]; then
-            export BRANCH_NAME=update-neurodesk-to-v${NEURODESK_LATEST}
-            # this will fail if the branch already exists which means we won't have duplicate PRs
-            git checkout -b "${BRANCH_NAME}"
-            git config user.name "Neurodesk Desktop Bot"
-            git config user.email 'neurodesk-bot@users.noreply.github.com'
+          NEURODESK_LATEST=${{ env.neurodesk_latest }}
 
-            git commit . -m "Update to Neurodesk v${NEURODESK_LATEST}"
-
-            git push --set-upstream origin "${BRANCH_NAME}"            
-            sudo apt install hub      
-            hub pull-request -m "Update to Neurodesk v${NEURODESK_LATEST}" \
-                -m "New Neurodesk release [v${NEURODESK_LATEST}](https://github.com/NeuroDesk/neurodesk.github.io/blob/main/data/neurodesktop.toml) is available. Please review the lock file carefully.".
+          if [[ -z "$(git status --porcelain neurodesktop.toml)" ]]; then
+            echo "neurodesktop.toml is already at v${NEURODESK_LATEST} - nothing to do."
+            exit 0
           fi
+
+          BRANCH_NAME=update-neurodesk-to-v${NEURODESK_LATEST}
+
+          # A leftover branch on origin means this PR was already raised (branches
+          # are not always deleted once merged). Recreating it here would produce a
+          # new commit and a non-fast-forward push, so skip instead.
+          if git ls-remote --exit-code --heads origin "${BRANCH_NAME}" >/dev/null 2>&1; then
+            echo "Branch ${BRANCH_NAME} already exists on origin - PR already raised, skipping."
+            exit 0
+          fi
+
+          git config user.name "Neurodesk Desktop Bot"
+          git config user.email 'neurodesk-bot@users.noreply.github.com'
+
+          git checkout -b "${BRANCH_NAME}"
+          git commit neurodesktop.toml -m "Update to Neurodesk v${NEURODESK_LATEST}"
+          git push --set-upstream origin "${BRANCH_NAME}"
+
+          sudo apt install hub
+          hub pull-request -m "Update to Neurodesk v${NEURODESK_LATEST}" \
+              -m "New Neurodesk release [v${NEURODESK_LATEST}](https://github.com/NeuroDesk/neurodesk.github.io/blob/main/data/neurodesktop.toml) is available. Please review the lock file carefully."

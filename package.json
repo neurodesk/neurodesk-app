@@ -32,7 +32,6 @@
     "create_env_installer:mac": "rimraf ./env_installer/NeurodeskApp*.sh && constructor ./env_installer --platform=osx-64 --output-dir ./env_installer",
     "create_env_installer:win": "rimraf ./env_installer/NeurodeskApp*.exe && constructor ./env_installer --platform=win-64 --output-dir ./env_installer",
     "check_version_match": "node scripts/buildutil.js --check-version-match",
-    "set_tinyrange_version": "node scripts/neurodeskutil.js --set-tinyrange-version",
     "set_neurodesk_version": "node scripts/neurodeskutil.js --set-neurodesk-version",
     "eslint": "eslint --ext .js,.jsx,.ts,.tsx --cache --fix .",
     "eslint:check": "eslint --ext .js,.jsx,.ts,.tsx --cache .",
