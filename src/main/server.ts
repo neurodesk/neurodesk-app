@@ -405,10 +405,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         echo [neurodesk-app] Container name: ${containerName}
         echo [neurodesk-app] Port: ${strPort}
         echo [neurodesk-app] Ensuring CVMFS is running in WSL...
-        wsl -u root -- bash -c "if ! mountpoint -q /cvmfs 2>/dev/null; then cvmfs_config wsl2_start; else echo '[neurodesk-app] CVMFS already mounted'; fi" 2>&1
-        if %ERRORLEVEL% neq 0 (
-          echo [neurodesk-app] WARNING: Failed to start CVMFS in WSL. Modules may not be available.
-        )
+        wsl -u root -- bash -c "if [ ! -d ${NEURODESK_MODULES_DIR} ]; then echo '[neurodesk-app] Modules not found, starting CVMFS...'; cvmfs_config wsl2_start; echo '[neurodesk-app] Triggering CVMFS repo...'; ls ${NEURODESK_MODULES_DIR} > /dev/null 2>&1; else echo '[neurodesk-app] CVMFS modules already available'; fi" 2>&1
         ${stopCmd}
         echo [neurodesk-app] Pulling image docker.io/${imageRegistry}...
         ${engineType} pull docker.io/${imageRegistry} 2>&1
