@@ -425,9 +425,11 @@ export class SettingsDialog {
         const engineHint = document.getElementById('engine-hint');
         document
           .getElementById('engine-type-group')
-          .addEventListener('change', () => {
-            const checked = document.querySelector('jp-radio[name="engine-type"].checked');
-            engineHint.hidden = !checked || checked.value !== '<%= engineHintFor %>';
+          .addEventListener('change', (e) => {
+            if (e.target && e.target.value) {
+              engineHint.hidden = e.target.value !== '<%= engineHintFor %>';
+              window.electronAPI.setEngineType(e.target.value);
+            }
           });
 
         function showProgress(message, animate) {
