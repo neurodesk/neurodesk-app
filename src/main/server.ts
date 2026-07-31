@@ -23,7 +23,39 @@ import {
 import { randomBytes } from 'crypto';
 import { ProgressView } from './progressview/progressview';
 
-const BASE_CONTAINER_NAME = 'neurodeskapp';
+export interface IAppDomainConfig {
+  containerName: string;
+  imageRepository: string;
+  storageDirectoryName: string;
+  homeVolumeName: string;
+  envVersionKey: string;
+  appArmorProfile: string;
+  tempFilePrefix: string;
+}
+
+export const defaultDomainConfig: IAppDomainConfig = {
+  containerName: 'neurodeskapp',
+  imageRepository: 'vnmd/neurodesktop',
+  storageDirectoryName: 'neurodesktop-storage',
+  homeVolumeName: 'neurodesk-home',
+  envVersionKey: 'NEURODESKTOP_VERSION',
+  appArmorProfile: 'neurodeskapp',
+  tempFilePrefix: 'neurodesk_app'
+};
+
+let _domainConfig: IAppDomainConfig = { ...defaultDomainConfig };
+
+export function setDomainConfig(config: Partial<IAppDomainConfig>) {
+  _domainConfig = { ...defaultDomainConfig, ...config };
+}
+
+export function getDomainConfig(): IAppDomainConfig {
+  return _domainConfig;
+}
+
+function getBaseContainerName(): string {
+  return _domainConfig.containerName;
+}
 
 // CVMFS-hosted lmod module tree, bind-mounted into the container on WSL.
 const NEURODESK_MODULES_DIR = '/cvmfs/neurodesk.ardc.edu.au/neurodesk-modules';
@@ -52,7 +84,7 @@ function createTempFile(
   data = '',
   encoding: BufferEncoding = 'utf8'
 ) {
-  const tempDirPath = path.join(os.tmpdir(), 'neurodesk_app');
+  const tempDirPath = path.join(os.tmpdir(), getDomainConfig().tempFilePrefix);
   const tmpDir = fs.mkdtempSync(tempDirPath);
   const tmpFilePath = path.join(tmpDir, fileName);
 
@@ -108,6 +140,7 @@ export interface ILaunchScriptParams {
   containerName?: string;
   isNfsWorkingDirectory?: boolean;
   storageDirectory?: string;
+  pullLogPath?: string;
 }
 
 /**
@@ -117,26 +150,27 @@ export interface ILaunchScriptParams {
 export function resolveContainerName(engineType: EngineType): string {
   const isTinyRange = engineType === EngineType.TinyRange;
   if (isTinyRange) {
-    return BASE_CONTAINER_NAME;
+    return getBaseContainerName();
   }
 
   // Always remove any existing container with the base name
+  const baseName = getBaseContainerName();
   const isLinux = process.platform === 'linux';
   const rmCmd =
     process.platform === 'win32'
-      ? `${engineType} rm -f ${BASE_CONTAINER_NAME} >NUL 2>&1`
+      ? `${engineType} rm -f ${baseName} >NUL 2>&1`
       : `${
           isLinux ? 'timeout 30 ' : ''
-        }${engineType} rm -f ${BASE_CONTAINER_NAME} &>/dev/null`;
+        }${engineType} rm -f ${baseName} &>/dev/null`;
   try {
     execSync(rmCmd, { encoding: 'utf-8', timeout: 35000 });
   } catch {
     // Container doesn't exist, rm failed, or timed out — proceed
     log.error(
-      `Failed to remove existing container with name ${BASE_CONTAINER_NAME} (it may not exist): ${engineType} rm -f ${BASE_CONTAINER_NAME}`
+      `Failed to remove existing container with name ${baseName} (it may not exist): ${engineType} rm -f ${baseName}`
     );
   }
-  return BASE_CONTAINER_NAME;
+  return baseName;
 }
 
 /**
@@ -162,7 +196,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const isLinux = platform === 'linux';
   const strPort = port.toString();
   const containerJupyterPort = '8888';
-  const imageRegistry = `vnmd/neurodesktop:${tag}`;
+  const domainCfg = getDomainConfig();
+  const imageRegistry = `${domainCfg.imageRepository}:${tag}`;
   const isPodman = engineType === EngineType.Podman;
   const isTinyRange = engineType === EngineType.TinyRange;
   const isDocker = engineType === EngineType.Docker;
@@ -170,14 +205,14 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const isWsl = engineType === EngineType.WSL;
   const CVMFS_DISABLE = cvmfsMode === 'true';
   const defaultStorageDir = isWin
-    ? 'C://neurodesktop-storage'
-    : '~/neurodesktop-storage';
+    ? `C://${domainCfg.storageDirectoryName}`
+    : `~/${domainCfg.storageDirectoryName}`;
   const neurodesktopStorageDir = params.storageDirectory
     ? isWin
       ? params.storageDirectory.replace(/\\/g, '//')
       : params.storageDirectory
     : defaultStorageDir;
-  const containerName = params.containerName || BASE_CONTAINER_NAME;
+  const containerName = params.containerName || getBaseContainerName();
 
   let resolvedWorkingDir = '';
   if (workingDirectory) {
@@ -205,12 +240,12 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     `--user=root`,
     `--name ${containerName}`,
     `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
-    `-e NEURODESKTOP_VERSION=${tag}`,
+    `-e ${domainCfg.envVersionKey}=${tag}`,
     `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
     `-e GRANT_SUDO=yes`,
     isWin
-      ? `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/neurodesktop-storage`
-      : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
+      ? `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/${domainCfg.storageDirectoryName}`
+      : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/${domainCfg.storageDirectoryName}`
   ];
 
   let launchArgs: string[] = [];
@@ -223,8 +258,10 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       `--oci ${imageRegistry}`,
       `--forward ${strPort}`,
       '-m //lib/qemu:user',
-      `--mount-rw ${neurodesktopStorageDir}:/neurodesktop-storage`,
-      `--volume neurodeskHome,${20 * 1024},/home,persist`,
+      `--mount-rw ${neurodesktopStorageDir}:/${domainCfg.storageDirectoryName}`,
+      `--volume ${domainCfg.homeVolumeName.replace(/-/g, '')}Home,${
+        20 * 1024
+      },/home,persist`,
       '--auto-scale'
     ];
   } else if (isWsl) {
@@ -238,27 +275,27 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       `--user=root`,
       `--name ${containerName}`,
       `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
-      `-e NEURODESKTOP_VERSION=${tag}`,
+      `-e ${domainCfg.envVersionKey}=${tag}`,
       `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
       `-e GRANT_SUDO=yes`,
       `-e NB_UID=1000 -e NB_GID=1000`,
       `-e SINGULARITY_BINDPATH='/cvmfs,/mnt,/home'`,
-      `-v ${neurodesktopStorageDir}:/neurodesktop-storage`,
+      `-v ${neurodesktopStorageDir}:/${domainCfg.storageDirectoryName}`,
       `-v /cvmfs:/cvmfs`,
-      `-v neurodesk-home:/home/jovyan`
+      `-v ${domainCfg.homeVolumeName}:/home/jovyan`
     ];
   } else {
     launchArgs = [
       `${engineType} run -d --rm`,
       ...commonLaunchArgs,
       isPodman
-        ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
-        : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
+        ? `-v ${domainCfg.homeVolumeName}:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
+        : `--mount source=${domainCfg.homeVolumeName},target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
       `--add-host=host.docker.internal:${
         isWin ? '!HOST_GATEWAY_IP!' : '${HOST_GATEWAY_IP}'
       } -e OLLAMA_HOST="http://host.docker.internal:11434"`,
       parseInt(osVersion) >= 2310 && isDocker
-        ? '--security-opt apparmor=neurodeskapp'
+        ? `--security-opt apparmor=${domainCfg.appArmorProfile}`
         : ''
     ];
   }
@@ -293,7 +330,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   } else if (!overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
-        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R "$(id -u)":"$(id -g)" /neurodesktop-storage; chmod -R 777 /neurodesktop-storage; chown -R "$(id -u)":"$(id -g)" /data; chmod -R 777 /data;`
+        ? `-e ${domainCfg.envVersionKey}=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R "$(id -u)":"$(id -g)" /${domainCfg.storageDirectoryName}; chmod -R 777 /${domainCfg.storageDirectoryName}; chown -R "$(id -u)":"$(id -g)" /data; chmod -R 777 /data;`
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
@@ -312,8 +349,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
 
   let volumeCheck = `${
     isWin
-      ? `${engineType} volume inspect neurodesk-home >NUL 2>&1 || ${engineType} volume create neurodesk-home`
-      : `${engineType} volume exists neurodesk-home &> /dev/null || ${engineType} volume create neurodesk-home`
+      ? `${engineType} volume inspect ${domainCfg.homeVolumeName} >NUL 2>&1 || ${engineType} volume create ${domainCfg.homeVolumeName}`
+      : `${engineType} volume exists ${domainCfg.homeVolumeName} &> /dev/null || ${engineType} volume create ${domainCfg.homeVolumeName}`
   }`;
   let volumeCreate = `${isPodman ? `${volumeCheck}` : ''}`;
 
@@ -326,8 +363,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     isTinyRange || isWsl
       ? ''
       : isWin
-      ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
-      : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
+      ? `${engineType} run --rm --entrypoint chown -v ${domainCfg.homeVolumeName}:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
+      : `${engineType} run --rm --entrypoint chown -v ${domainCfg.homeVolumeName}:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
   let removeCmd = `${
     isWin
@@ -398,6 +435,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       // WSL (`wslc`) is docker-compatible but only ever runs on Windows.
       // Keep the flow minimal: drop any stale container, pull the image
       // (idempotent — a no-op when already present), launch, then stream logs.
+      // wslc suppresses stdout/stderr when not connected to a TTY (pipe mode).
+      // Redirect pull output to a temp file so Node.js can poll it for progress.
+      const pullLog = params.pullLogPath || '';
       script = `
         setlocal enabledelayedexpansion
         echo [neurodesk-app] Launch script started
@@ -406,7 +446,13 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         echo [neurodesk-app] Port: ${strPort}
         ${stopCmd}
         echo [neurodesk-app] Pulling image docker.io/${imageRegistry}...
-        ${engineType} pull docker.io/${imageRegistry} 2>&1
+        ${
+          pullLog
+            ? `${engineType} pull docker.io/${imageRegistry} > "${pullLog}" 2>&1`
+            : `${engineType} pull docker.io/${imageRegistry}`
+        }
+        echo [neurodesk-app] Pull complete.
+        ${pullLog ? `type "${pullLog}"` : ''}
         echo [neurodesk-app] Starting container...
         ${launchCmd} 2>&1
         echo [neurodesk-app] Container started: ${containerName}
@@ -532,7 +578,7 @@ function createLaunchScript(
   engineType: EngineType,
   port: number,
   token: string
-): { scriptPath: string; containerName: string } {
+): { scriptPath: string; containerName: string; pullLogPath?: string } {
   const isWin = process.platform === 'win32';
   const config = Config.loadConfig(path.join(__dirname, '..'));
   const tag = config.ConfigToml.jupyter_neurodesk_version;
@@ -567,11 +613,12 @@ function createLaunchScript(
       .slice(0, 4);
   }
 
+  const domainCfg = getDomainConfig();
   const storageDir =
     userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
     (process.platform === 'win32'
-      ? 'C:/neurodesktop-storage'
-      : path.join(os.homedir(), 'neurodesktop-storage'));
+      ? `C:/${domainCfg.storageDirectoryName}`
+      : path.join(os.homedir(), domainCfg.storageDirectoryName));
 
   const isTinyRange = engineType === EngineType.TinyRange;
   if (isTinyRange) {
@@ -624,6 +671,12 @@ function createLaunchScript(
     }
   }
 
+  const isWsl = engineType === EngineType.WSL;
+  const pullLogPath =
+    isWin && isWsl
+      ? path.join(os.tmpdir(), `${domainCfg.tempFilePrefix}_pull_${port}.log`)
+      : undefined;
+
   const script = generateLaunchScript({
     engineType,
     port,
@@ -637,7 +690,8 @@ function createLaunchScript(
     osVersion,
     containerName,
     isNfsWorkingDirectory,
-    storageDirectory: storageDir
+    storageDirectory: storageDir,
+    pullLogPath
   });
 
   const ext = isWin ? 'bat' : 'sh';
@@ -649,7 +703,7 @@ function createLaunchScript(
     fs.chmodSync(scriptPath, 0o755);
   }
 
-  return { scriptPath, containerName };
+  return { scriptPath, containerName, pullLogPath };
 }
 
 async function checkIfUrlExists(url: URL): Promise<boolean> {
@@ -762,7 +816,8 @@ export class JupyterServer {
 
         const {
           scriptPath: launchScriptPath,
-          containerName
+          containerName,
+          pullLogPath
         } = createLaunchScript(
           this._info,
           this._info.engine,
@@ -810,6 +865,34 @@ export class JupyterServer {
 
         this._nbServer = execFile(launchScriptPath, execOptions);
 
+        // Poll the wslc pull log file every 15s to capture progress.
+        // wslc suppresses stdout/stderr when not connected to a TTY,
+        // so the batch script redirects pull output to a temp file.
+        let pullLogBytesRead = 0;
+        if (pullLogPath) {
+          this._pullLogPollInterval = setInterval(() => {
+            try {
+              const stat = fs.statSync(pullLogPath);
+              if (stat.size > pullLogBytesRead) {
+                const fd = fs.openSync(pullLogPath, 'r');
+                const buf = Buffer.alloc(stat.size - pullLogBytesRead);
+                fs.readSync(fd, buf, 0, buf.length, pullLogBytesRead);
+                fs.closeSync(fd);
+                pullLogBytesRead = stat.size;
+                const newContent = buf.toString('utf8');
+                if (newContent.trim()) {
+                  log.info(`wslc pull progress: ${newContent.trim()}`);
+                  if (this._progressView) {
+                    this._progressView.setChildProcessLog(newContent);
+                  }
+                }
+              }
+            } catch {
+              // File may not exist yet if pull hasn't started
+            }
+          }, 15000);
+        }
+
         const deadline = { value: Date.now() + SERVER_LAUNCH_TIMEOUT };
 
         Promise.race([
@@ -846,6 +929,15 @@ export class JupyterServer {
           stdoutChunks = stdoutChunks.concat(data);
           if (this._progressView) {
             this._progressView.setChildProcessLog(data);
+          }
+          // When pull completes, stop polling and clean up the temp log file
+          if (pullLogPath && data.includes('[neurodesk-app] Pull complete')) {
+            this._clearPullLogPoll();
+            try {
+              fs.unlinkSync(pullLogPath);
+            } catch {
+              // file may already be gone
+            }
           }
           // When container starts, extend deadline for Jupyter startup
           if (data.includes('[neurodesk-app] Container started:')) {
@@ -1074,7 +1166,15 @@ export class JupyterServer {
     this._stopServer = Promise.resolve();
   }
 
+  private _clearPullLogPoll(): void {
+    if (this._pullLogPollInterval) {
+      clearInterval(this._pullLogPollInterval);
+      this._pullLogPollInterval = null;
+    }
+  }
+
   private _cleanupListeners(): void {
+    this._clearPullLogPoll();
     this._nbServer.removeAllListeners();
     this._nbServer.stderr?.removeAllListeners();
     this._nbServer.stdout?.removeAllListeners();
@@ -1169,6 +1269,7 @@ export class JupyterServer {
   };
   private _stopping: boolean = false;
   private _restartCount: number = 0;
+  private _pullLogPollInterval: ReturnType<typeof setInterval> | null = null;
   private _progressView: ProgressView;
 }
 

@@ -16,7 +16,8 @@ import * as yaml from 'js-yaml';
 import * as semver from 'semver';
 import * as fs from 'fs';
 import { clearSession, customRelaunch, isDarkTheme } from './utils';
-import { IServerFactory, JupyterServerFactory } from './server';
+import { getDomainConfig, IServerFactory, JupyterServerFactory } from './server';
+import { fetchMigrationStatus } from './migrationcheck';
 import { connectAndGetServerInfo, IJupyterServerInfo } from './connect';
 import { UpdateDialog } from './updatedialog/updatedialog';
 import {
@@ -235,9 +236,10 @@ export function getNeurodesktopStoragePath(): string {
   if (custom) {
     return custom;
   }
+  const storageDirName = getDomainConfig().storageDirectoryName;
   return process.platform === 'win32'
-    ? 'C:/neurodesktop-storage'
-    : path.join(app.getPath('home'), 'neurodesktop-storage');
+    ? `C:/${storageDirName}`
+    : path.join(app.getPath('home'), storageDirName);
 }
 
 function createNeurodesktopStorage() {
@@ -291,6 +293,14 @@ export class JupyterApplication implements IApplication, IDisposable {
     }
 
     this._isDarkTheme = isDarkTheme(userSettings.getValue(SettingType.theme));
+
+    if (
+      userSettings.getValue(SettingType.checkForUpdatesAutomatically) !== false
+    ) {
+      setTimeout(() => {
+        this._checkForMigration();
+      }, 5000);
+    }
 
     this.startup();
   }
@@ -850,6 +860,31 @@ export class JupyterApplication implements IApplication, IDisposable {
         return true;
       }
     );
+  }
+
+  private async _checkForMigration() {
+    try {
+      const result = await fetchMigrationStatus();
+      if (result.shouldNotify && result.info) {
+        const message = result.info.message || 'This app has moved to a new location.';
+        const downloadUrl = result.info.downloadUrl;
+        const dialogOpts: MessageBoxOptions = {
+          type: 'info',
+          buttons: downloadUrl ? ['Download', 'Later'] : ['OK'],
+          title: 'App Migration Notice',
+          message,
+          detail: downloadUrl
+            ? 'Click Download to get the latest version from the new location.'
+            : undefined
+        };
+        const response = await dialog.showMessageBox(dialogOpts);
+        if (downloadUrl && response.response === 0) {
+          shell.openExternal(downloadUrl);
+        }
+      }
+    } catch (error) {
+      // Silent failure — migration check is non-critical
+    }
   }
 
   private _showUpdateDialog(
