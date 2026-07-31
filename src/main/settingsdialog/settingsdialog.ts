@@ -426,10 +426,7 @@ export class SettingsDialog {
         document
           .getElementById('engine-type-group')
           .addEventListener('change', (e) => {
-            if (e.target && e.target.value) {
-              engineHint.hidden = e.target.value !== '<%= engineHintFor %>';
-              window.electronAPI.setEngineType(e.target.value);
-            }
+            engineHint.hidden = !e.target || e.target.value !== '<%= engineHintFor %>';
           });
 
         function showProgress(message, animate) {
