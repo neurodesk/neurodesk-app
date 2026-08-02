@@ -399,7 +399,14 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       // user's Ubuntu distro (where CVMFS is installed) into neurodesktop-storage
       // (a Windows path accessible to both WSL and wslc). Inside the container
       // the modules appear at /neurodesktop-storage/neurodesk-modules.
-      const wslStoragePath = neurodesktopStorageDir.replace(/\\\\/g, '/');
+      // Convert Windows path (e.g. C:/neurodesktop-storage) to WSL path
+      // (e.g. /mnt/c/neurodesktop-storage) at build time so we don't need
+      // wslpath at runtime (cmd.exe mangles $() substitution).
+      const winPath = neurodesktopStorageDir.replace(/\\\\/g, '/');
+      const wslStoragePath = winPath.replace(
+        /^([A-Za-z]):\//,
+        (_, drive: string) => `/mnt/${drive.toLowerCase()}/`
+      );
       script = `
         setlocal enabledelayedexpansion
         echo [neurodesk-app] Launch script started
@@ -409,7 +416,11 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         echo [neurodesk-app] Ensuring CVMFS is running in WSL...
         wsl -u root -- bash -c "cvmfs_config wsl2_start" 2>&1
         echo [neurodesk-app] Copying neurodesk-modules to storage directory...
-        wsl -- bash -c "dest=$(wslpath '${wslStoragePath}')/containers/modules; mkdir -p \\"$dest\\"; for d in ${NEURODESK_CVMFS_MODULES_DIR}/*/; do cp -ru \\"$d\\"* \\"$dest/\\"; done" 2>&1
+        wsl -- mkdir -p ${wslStoragePath}/containers/modules 2>&1
+        wsl -- find ${NEURODESK_CVMFS_MODULES_DIR} -mindepth 2 -maxdepth 2 -type d 2>&1 > %TEMP%\\nd_modules.txt
+        for /f "usebackq delims=" %%d in ("%TEMP%\\nd_modules.txt") do (
+          wsl -- cp -ru --no-preserve=ownership,mode %%d ${wslStoragePath}/containers/modules/ 2>&1
+        )
         ${stopCmd}
         echo [neurodesk-app] Pulling image docker.io/${imageRegistry}...
         ${engineType} pull docker.io/${imageRegistry} 2>&1
