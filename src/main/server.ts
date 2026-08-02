@@ -25,12 +25,6 @@ import { ProgressView } from './progressview/progressview';
 
 const BASE_CONTAINER_NAME = 'neurodeskapp';
 
-// Path to neurodesk-modules inside the container (copied into neurodesktop-storage).
-const NEURODESK_MODULES_DIR = '/neurodesktop-storage/containers/modules';
-// Source path on the WSL Ubuntu distro where CVMFS publishes modules.
-const NEURODESK_CVMFS_MODULES_DIR =
-  '/cvmfs/neurodesk.ardc.edu.au/neurodesk-modules';
-
 const SERVER_LAUNCH_TIMEOUT = 40 * 60000; // milliseconds
 const JUPYTER_STARTUP_TIMEOUT = 10 * 60000; // 10 min for Jupyter to start after container is up
 const SERVER_RESTART_LIMIT = 1; // max server restarts
@@ -167,8 +161,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const isPodman = engineType === EngineType.Podman;
   const isTinyRange = engineType === EngineType.TinyRange;
   const isDocker = engineType === EngineType.Docker;
-  // WSL is Windows-only and uses the docker-compatible `wslc` CLI.
-  const isWsl = engineType === EngineType.WSL;
   const CVMFS_DISABLE = cvmfsMode === 'true';
   const defaultStorageDir = isWin
     ? 'C://neurodesktop-storage'
@@ -228,25 +220,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       `--volume neurodeskHome,${20 * 1024},/home,persist`,
       '--auto-scale'
     ];
-  } else if (isWsl) {
-    // WSL uses the docker-compatible `wslc` CLI (Windows only). Keep the
-    // argument set minimal to match the supported `wslc run` invocation.
-    // Modules are copied from WSL's CVMFS into neurodesktop-storage before
-    // the container starts (no bind-mount needed, no --privileged).
-    launchArgs = [
-      `${engineType} run -d --rm`,
-      `--shm-size=1G`,
-      `--user=root`,
-      `--name ${containerName}`,
-      `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
-      `-e NEURODESKTOP_VERSION=${tag}`,
-      `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
-      `-e GRANT_SUDO=yes`,
-      `-e NB_UID=1000 -e NB_GID=1000`,
-      `-e SINGULARITY_BINDPATH='/neurodesktop-storage,/mnt,/home'`,
-      `-v ${neurodesktopStorageDir}:/neurodesktop-storage`,
-      `-v neurodesk-home:/home/jovyan`
-    ];
   } else {
     launchArgs = [
       `${engineType} run -d --rm`,
@@ -273,22 +246,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         : ` --volume "${resolvedWorkingDir}":/data`
     );
   }
-  // `wslc` resolves images from Docker Hub, so use the fully-qualified name.
-  launchArgs.push(isWsl ? `docker.io/${imageRegistry}` : imageRegistry);
+  launchArgs.push(imageRegistry);
 
-  if (!overrideDefaultServerArgs && isWsl) {
-    // Modules are copied from WSL's CVMFS into /neurodesktop-storage before
-    // the container starts (see the WSL batch script below). Tell lmod where
-    // they are so `module avail` works in terminals and notebook kernels.
-    const serverCmd = serverLaunchArgsDefault
-      .map(arg =>
-        arg.replace('{token}', token).replace('{port}', containerJupyterPort)
-      )
-      .join(' ');
-    launchArgs.push(
-      `bash -lc "module use ${NEURODESK_MODULES_DIR}/*; exec ${serverCmd}"`
-    );
-  } else if (!overrideDefaultServerArgs) {
+  if (!overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
         ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R "$(id -u)":"$(id -g)" /neurodesktop-storage; chmod -R 777 /neurodesktop-storage; chown -R "$(id -u)":"$(id -g)" /data; chmod -R 777 /data;`
@@ -320,12 +280,11 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // (e.g. when --user=root processes create files before the entrypoint chowns).
   // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
   // This runs in a separate container (no FUSE/CVMFS active), so chown -R is safe.
-  let fixPermissionsCmd =
-    isTinyRange || isWsl
-      ? ''
-      : isWin
-      ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
-      : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
+  let fixPermissionsCmd = isTinyRange
+    ? ''
+    : isWin
+    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
+    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
   let removeCmd = `${
     isWin
@@ -352,10 +311,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // Podman only added 'host-gateway' support in v4.1.0.
   // On macOS/Windows, Podman runs in a VM so host-gateway does not reliably resolve to the host.
   // We always resolve the actual gateway IP for Podman on macOS/Windows.
-  const hostGatewayResolveWin =
-    isTinyRange || isWsl
-      ? ''
-      : `
+  const hostGatewayResolveWin = isTinyRange
+    ? ''
+    : `
         SET HOST_GATEWAY_IP=host-gateway
         ${
           isPodman
@@ -391,43 +349,6 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       script = `
         setlocal enabledelayedexpansion
         ${launchCmd}
-      `;
-    } else if (isWsl) {
-      // WSL (`wslc`) is docker-compatible but only ever runs on Windows.
-      // wslc runs in its own isolated WSL session, so bind-mounting /cvmfs from
-      // it yields an empty directory. Instead, copy neurodesk-modules from the
-      // user's Ubuntu distro (where CVMFS is installed) into neurodesktop-storage
-      // (a Windows path accessible to both WSL and wslc). Inside the container
-      // the modules appear at /neurodesktop-storage/neurodesk-modules.
-      // Convert Windows path (e.g. C:/neurodesktop-storage) to WSL path
-      // (e.g. /mnt/c/neurodesktop-storage) at build time so we don't need
-      // wslpath at runtime (cmd.exe mangles $() substitution).
-      const winPath = neurodesktopStorageDir.replace(/\\\\/g, '/');
-      const wslStoragePath = winPath.replace(
-        /^([A-Za-z]):\//,
-        (_, drive: string) => `/mnt/${drive.toLowerCase()}/`
-      );
-      script = `
-        setlocal enabledelayedexpansion
-        echo [neurodesk-app] Launch script started
-        echo [neurodesk-app] Engine: ${engineType}
-        echo [neurodesk-app] Container name: ${containerName}
-        echo [neurodesk-app] Port: ${strPort}
-        echo [neurodesk-app] Ensuring CVMFS is running in WSL...
-        wsl -u root -- bash -c "cvmfs_config wsl2_start" 2>&1
-        echo [neurodesk-app] Copying neurodesk-modules to storage directory...
-        wsl -- mkdir -p ${wslStoragePath}/containers/modules 2>&1
-        wsl -- find ${NEURODESK_CVMFS_MODULES_DIR} -mindepth 2 -maxdepth 2 -type d 2>&1 > %TEMP%\\nd_modules.txt
-        for /f "usebackq delims=" %%d in ("%TEMP%\\nd_modules.txt") do (
-          wsl -- cp -ru --no-preserve=ownership,mode %%d ${wslStoragePath}/containers/modules/ 2>&1
-        )
-        ${stopCmd}
-        echo [neurodesk-app] Pulling image docker.io/${imageRegistry}...
-        ${engineType} pull docker.io/${imageRegistry} 2>&1
-        echo [neurodesk-app] Starting container...
-        ${launchCmd} 2>&1
-        echo [neurodesk-app] Container started: ${containerName}
-        ${engineType} logs -f ${containerName} 2>&1
       `;
     } else {
       script = `
@@ -1341,7 +1262,7 @@ export class JupyterServerFactory implements IServerFactory, IDisposable {
       this._removeFailedServer(item.factoryId);
     });
 
-    // log.debug('~ createServer ~ ', item);
+    log.debug('~ createServer ~ ', item);
     return item;
   }
 

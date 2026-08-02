@@ -109,7 +109,6 @@ Use the /browse skill from gstack for all web browsing, never use mcp**claude-in
 When debugging any bug, test failure, or unexpected behavior, follow the systematic debugging process in `.agents/skills/systematic-debugging/SKILL.md`.
 
 Key rules:
-
 - NO fixes without root cause investigation first (Phase 1)
 - Complete all four phases: Root Cause Investigation -> Pattern Analysis -> Hypothesis Testing -> Implementation
 - If 3+ fix attempts fail, stop and question the architecture

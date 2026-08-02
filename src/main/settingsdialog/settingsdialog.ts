@@ -57,11 +57,6 @@ export class SettingsDialog {
 
     const ctrlWLabel = process.platform === 'darwin' ? 'Cmd + W' : 'Ctrl + W';
 
-    // Engine whose selection shows the setup hint under Engine Options. Single
-    // source of truth: EJS uses it for the initial hidden state, and it is
-    // inlined into the client-side change handler below.
-    const engineHintFor: EngineType = EngineType.WSL;
-
     const template = `
       <style>
       #container {
@@ -120,15 +115,6 @@ export class SettingsDialog {
       .row {
         display: flex;
         align-items: center;
-      }
-      /* Helper text under a setting. Deliberately NOT .row: that is a flex
-         container, which splits a sentence containing inline markup into one
-         flex item per text run and per element. */
-      .hint {
-        opacity: 0.7;
-        font-size: 12px;
-        line-height: 16px;
-        margin: 4px 0 8px;
       }
       .footer-row {
         height: 50px;
@@ -211,16 +197,13 @@ export class SettingsDialog {
             <jp-tab id="tab-advanced">Advanced</jp-tab>
 
             <jp-tab-panel id="tab-panel-general">
-              <jp-radio-group id="engine-type-group" orientation="horizontal">
+              <jp-radio-group orientation="horizontal">
                 <label slot="label">Engine Options</label>
                 <jp-radio name="engine-type" value="docker" <%= engineType === 'docker' ? 'checked' : '' %>>Docker</jp-radio>
                 <jp-radio name="engine-type" value="podman" <%= engineType === 'podman' ? 'checked' : '' %>>Podman</jp-radio>
                 <jp-radio name="engine-type" value="tinyrange" <%= engineType === 'tinyrange' ? 'checked' : '' %>>TinyRange</jp-radio>
-                <% if (isWindows) { %>
-                <jp-radio name="engine-type" value="wslc" <%= engineType === 'wslc' ? 'checked' : '' %>>WSL</jp-radio>
-                <% } %>
                 </jp-radio-group>
-                <div id="engine-hint" class="hint" <%= engineType === engineHintFor ? '' : 'hidden' %>>Follow the instructions in the <a href="https://neurodesk.org/getting-started/neurocontainers/cvmfs/" target="_blank">Neurodesk documentation</a> to set up WSL and the WSL-based engine.</div>
+
               <jp-radio-group orientation="horizontal">
                 <label slot="label">On startup</label>
                 <jp-radio name="startup-mode" value="welcome-page" <%= startupMode === 'welcome-page' ? 'checked' : '' %>>Show welcome page</jp-radio>
@@ -419,16 +402,6 @@ export class SettingsDialog {
         const progressAnimation = document.getElementById('progress-animation');
         let defaultPythonEnvChanged = false;
 
-        // The engine hint is server-rendered from the SAVED engine, because EJS
-        // runs once when the dialog is built. Keep it in sync with what the user
-        // picks, otherwise it only ever reflects the engine at dialog open.
-        const engineHint = document.getElementById('engine-hint');
-        document
-          .getElementById('engine-type-group')
-          .addEventListener('change', (e) => {
-            engineHint.hidden = !e.target || e.target.value !== '<%= engineHintFor %>';
-          });
-
         function showProgress(message, animate) {
           progressMessage.innerText = message;
           progressMessage.style.visibility = message !== '' ? 'visible' : 'hidden';
@@ -475,8 +448,6 @@ export class SettingsDialog {
     `;
     this._pageBody = ejs.render(template, {
       engineType,
-      engineHintFor,
-      isWindows: process.platform === 'win32',
       startupMode,
       cvmfsMode,
       theme,

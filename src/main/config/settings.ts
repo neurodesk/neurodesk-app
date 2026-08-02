@@ -17,9 +17,7 @@ export enum ThemeType {
 export enum EngineType {
   Docker = 'docker',
   Podman = 'podman',
-  TinyRange = 'tinyrange',
-  // Windows-only: WSL-based engine using the docker-compatible `wslc` CLI.
-  WSL = 'wslc'
+  TinyRange = 'tinyrange'
 }
 
 export enum StartupMode {
