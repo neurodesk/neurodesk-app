@@ -26,7 +26,7 @@ import { ProgressView } from './progressview/progressview';
 const BASE_CONTAINER_NAME = 'neurodeskapp';
 
 // Path to neurodesk-modules inside the container (copied into neurodesktop-storage).
-const NEURODESK_MODULES_DIR = '/neurodesktop-storage/neurodesk-modules';
+const NEURODESK_MODULES_DIR = '/neurodesktop-storage/containers/modules';
 // Source path on the WSL Ubuntu distro where CVMFS publishes modules.
 const NEURODESK_CVMFS_MODULES_DIR =
   '/cvmfs/neurodesk.ardc.edu.au/neurodesk-modules';
@@ -409,7 +409,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         echo [neurodesk-app] Ensuring CVMFS is running in WSL...
         wsl -u root -- bash -c "cvmfs_config wsl2_start" 2>&1
         echo [neurodesk-app] Copying neurodesk-modules to storage directory...
-        wsl -- bash -c "cp -ruT ${NEURODESK_CVMFS_MODULES_DIR}/ $(wslpath '${wslStoragePath}')/neurodesk-modules/" 2>&1
+        wsl -- bash -c "dest=$(wslpath '${wslStoragePath}')/containers/modules; mkdir -p \\"$dest\\"; for d in ${NEURODESK_CVMFS_MODULES_DIR}/*/; do cp -ru \\"$d\\"* \\"$dest/\\"; done" 2>&1
         ${stopCmd}
         echo [neurodesk-app] Pulling image docker.io/${imageRegistry}...
         ${engineType} pull docker.io/${imageRegistry} 2>&1
