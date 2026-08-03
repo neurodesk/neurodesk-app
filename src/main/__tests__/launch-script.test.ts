@@ -240,18 +240,14 @@ describe('generateLaunchScript', () => {
       expect(script).toContain(
         'podman image inspect docker.io/vnmd/neurodesktop:2024-07-15'
       );
-      expect(script).toContain(
-        'docker.io/vnmd/neurodesktop:2024-07-15 -R'
-      );
+      expect(script).toContain('docker.io/vnmd/neurodesktop:2024-07-15 -R');
       // The run command ends with the image name
       expect(script).toContain('docker.io/vnmd/neurodesktop:2024-07-15');
       // Should not use short name (except as substring of the fully qualified name)
-      const shortNameOccurrences = script
-        .split('vnmd/neurodesktop:2024-07-15')
-        .length - 1;
-      const fullyQualifiedOccurrences = script
-        .split('docker.io/vnmd/neurodesktop:2024-07-15')
-        .length - 1;
+      const shortNameOccurrences =
+        script.split('vnmd/neurodesktop:2024-07-15').length - 1;
+      const fullyQualifiedOccurrences =
+        script.split('docker.io/vnmd/neurodesktop:2024-07-15').length - 1;
       expect(shortNameOccurrences).toBe(fullyQualifiedOccurrences);
     });
   });
