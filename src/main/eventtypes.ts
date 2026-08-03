@@ -53,7 +53,8 @@ export enum EventTypeMain {
   SetCtrlWBehavior = 'set-ctrl-w-behavior',
   ShowLogs = 'show-logs',
   GetChildProcressLog = 'get-child-process-log',
-  SetAuthDialogResponse = 'set-auth-dialog-response'
+  SetAuthDialogResponse = 'set-auth-dialog-response',
+  SetTelemetryConsent = 'set-telemetry-consent'
 }
 
 // events sent to Renderer process

@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   setStorageDirectory: (path: string) => {
     ipcRenderer.send(EventTypeMain.SetStorageDirectory, path);
+  },
+  setTelemetryConsent: (consent: string) => {
+    ipcRenderer.send(EventTypeMain.SetTelemetryConsent, consent);
   }
 });
 

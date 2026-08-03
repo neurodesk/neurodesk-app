@@ -39,6 +39,12 @@ export enum LogLevel {
   Debug = 'debug'
 }
 
+export enum TelemetryConsent {
+  Unset = 'unset',
+  On = 'on',
+  Off = 'off'
+}
+
 export enum CtrlWBehavior {
   CloseWindow = 'close',
   Warn = 'warn',
@@ -66,7 +72,9 @@ export enum SettingType {
 
   ctrlWBehavior = 'ctrlWBehavior',
 
-  logLevel = 'logLevel'
+  logLevel = 'logLevel',
+
+  telemetryConsent = 'telemetryConsent'
 }
 
 // export const serverLaunchArgsFixed = [
@@ -154,7 +162,9 @@ export class UserSettings {
       cvmfsMode: new Setting<CvmfsMode>(CvmfsMode.Stream),
       ctrlWBehavior: new Setting<CtrlWBehavior>(CtrlWBehavior.CloseTab),
 
-      logLevel: new Setting<string>(LogLevel.Info)
+      logLevel: new Setting<string>(LogLevel.Info),
+
+      telemetryConsent: new Setting<TelemetryConsent>(TelemetryConsent.Unset)
     };
 
     if (readSettings) {

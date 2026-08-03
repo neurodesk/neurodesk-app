@@ -184,6 +184,7 @@
     "node": ">=22.12.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@jupyter-notebook/web-components": "0.9.1",
     "@types/ejs": "^3.1.0",
     "@types/jest": "^30.0.0",
@@ -195,7 +196,6 @@
     "@types/yargs": "^17.0.18",
     "@typescript-eslint/eslint-plugin": "~5.28.0",
     "@typescript-eslint/parser": "~5.28.0",
-    "@electron/notarize": "^3.1.1",
     "electron": "^42.4.0",
     "electron-builder": "^26.0.7",
     "eslint": "~8.17.0",
@@ -226,6 +226,7 @@
     "fast-xml-parser": "^5.7.0",
     "fix-path": "^3.0.0",
     "js-yaml": "^4.2.0",
+    "posthog-node": "^5.47.3",
     "semver": "^7.5.2",
     "toml": "^3.0.0",
     "update-electron-app": "^2.0.1",

@@ -27,6 +27,7 @@ import {
   resolveWorkingDirectory,
   SettingType,
   StartupMode,
+  TelemetryConsent,
   userSettings
 } from './config/settings';
 import {
@@ -43,6 +44,8 @@ import { SettingsDialog } from './settingsdialog/settingsdialog';
 import { AboutDialog } from './aboutdialog/aboutdialog';
 import { AuthDialog } from './authdialog/authdialog';
 import * as path from 'path';
+import { ConsentDialog } from './consentdialog/consentdialog';
+import { closeTelemetry, initTelemetry } from './telemetry';
 
 const release = require(path.join(__dirname, '..', 'package.json')).version;
 
@@ -292,6 +295,9 @@ export class JupyterApplication implements IApplication, IDisposable {
 
     this._isDarkTheme = isDarkTheme(userSettings.getValue(SettingType.theme));
 
+    initTelemetry();
+    this._showConsentDialogIfNeeded();
+
     this.startup();
   }
 
@@ -402,7 +408,8 @@ export class JupyterApplication implements IApplication, IDisposable {
       //   SettingType.overrideDefaultServerArgs
       // ),
       serverEnvVars: userSettings.getValue(SettingType.serverEnvVars),
-      ctrlWBehavior: userSettings.getValue(SettingType.ctrlWBehavior)
+      ctrlWBehavior: userSettings.getValue(SettingType.ctrlWBehavior),
+      telemetryConsent: userSettings.getValue(SettingType.telemetryConsent)
     });
 
     this._settingsDialog = dialog;
@@ -791,6 +798,14 @@ export class JupyterApplication implements IApplication, IDisposable {
       }
     );
 
+    this._evm.registerEventHandler(
+      EventTypeMain.SetTelemetryConsent,
+      (_event, consent: TelemetryConsent) => {
+        userSettings.setValue(SettingType.telemetryConsent, consent);
+        userSettings.save();
+      }
+    );
+
     this._evm.registerSyncEventHandler(
       EventTypeMain.GetServerInfo,
       (event): Promise<IServerInfo> => {
@@ -900,6 +915,48 @@ export class JupyterApplication implements IApplication, IDisposable {
       });
   }
 
+  private _showConsentDialogIfNeeded(): void {
+    const consent = userSettings.getValue(
+      SettingType.telemetryConsent
+    ) as TelemetryConsent;
+
+    if (consent !== TelemetryConsent.Unset) {
+      return;
+    }
+
+    // Show consent dialog after a short delay to let the main window load
+    setTimeout(() => {
+      const dialog = new ConsentDialog({
+        isDarkTheme: this._isDarkTheme,
+        onResult: () => {
+          // Re-init telemetry if user accepted
+          const newConsent = userSettings.getValue(
+            SettingType.telemetryConsent
+          ) as TelemetryConsent;
+          if (newConsent === TelemetryConsent.On) {
+            initTelemetry();
+          }
+        }
+      });
+
+      dialog.window.on('closed', () => {
+        // If user closed without choosing, treat as declined
+        const currentConsent = userSettings.getValue(
+          SettingType.telemetryConsent
+        ) as TelemetryConsent;
+        if (currentConsent === TelemetryConsent.Unset) {
+          userSettings.setValue(
+            SettingType.telemetryConsent,
+            TelemetryConsent.Off
+          );
+          userSettings.save();
+        }
+      });
+
+      dialog.load();
+    }, 3000);
+  }
+
   private _quit(): void {
     const forceExit = setTimeout(() => {
       log.warn('Shutdown timed out after 15s, forcing exit');
@@ -908,6 +965,7 @@ export class JupyterApplication implements IApplication, IDisposable {
     forceExit.unref();
 
     this.dispose()
+      .then(() => closeTelemetry())
       .then(() => {
         clearTimeout(forceExit);
         process.exit();
@@ -915,7 +973,7 @@ export class JupyterApplication implements IApplication, IDisposable {
       .catch(err => {
         clearTimeout(forceExit);
         log.error(new Error('JupyterLab could not close successfully'));
-        process.exit();
+        closeTelemetry().finally(() => process.exit());
       });
   }
 

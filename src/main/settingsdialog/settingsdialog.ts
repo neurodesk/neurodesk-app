@@ -15,6 +15,7 @@ import {
   // serverLaunchArgsDefault,
   // serverLaunchArgsFixed,
   StartupMode,
+  TelemetryConsent,
   ThemeType
 } from '../config/settings';
 export class SettingsDialog {
@@ -42,7 +43,8 @@ export class SettingsDialog {
       serverArgs,
       // overrideDefaultServerArgs,
       serverEnvVars,
-      ctrlWBehavior
+      ctrlWBehavior,
+      telemetryConsent
     } = options;
     const installUpdatesAutomaticallyEnabled = process.platform === 'darwin';
     const installUpdatesAutomatically =
@@ -281,6 +283,18 @@ export class SettingsDialog {
             </jp-tab-panel>
 
             <jp-tab-panel id="tab-panel-privacy">
+              <div class="setting-section">
+                <div class="row" style="line-height: 30px;">
+                  <label>Crash Reporting</label>
+                </div>
+                <div class="row">
+                  <jp-checkbox id='checkbox-telemetry' type='checkbox' <%= telemetryConsent === 'on' ? 'checked' : '' %>>Send anonymous crash reports to help improve Neurodesk</jp-checkbox>
+                </div>
+                <div class="row" style="opacity: 0.7; font-size: 12px; margin-top: 4px;">
+                  <label>Includes error details, OS info, and app logs. Never includes your files, passwords, or personal data.</label>
+                </div>
+              </div>
+
               <div id="clear-history">
                 <div class="row" style="line-height: 30px;">
                   <label>Clear History</label>
@@ -430,6 +444,8 @@ export class SettingsDialog {
           const ctrlWBehavior = document.querySelector('jp-radio[name="ctrl-w-behavior"].checked').value;
           window.electronAPI.setCtrlWBehavior(ctrlWBehavior);
 
+          const telemetryCheckbox = document.getElementById('checkbox-telemetry');
+          window.electronAPI.setTelemetryConsent(telemetryCheckbox.checked ? 'on' : 'off');
 
           window.electronAPI.restartApp();
         }
@@ -467,7 +483,8 @@ export class SettingsDialog {
       serverArgs,
       // overrideDefaultServerArgs,
       serverEnvVars: strServerEnvVars,
-      ctrlWBehavior
+      ctrlWBehavior,
+      telemetryConsent
     });
   }
 
@@ -510,5 +527,6 @@ export namespace SettingsDialog {
     // overrideDefaultServerArgs: boolean;
     serverEnvVars: KeyValueMap;
     ctrlWBehavior: CtrlWBehavior;
+    telemetryConsent: TelemetryConsent;
   }
 }

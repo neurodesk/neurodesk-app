@@ -10,6 +10,7 @@ const preloadPrefix = 'build/out/main';
 const preloadFiles = [
   'aboutdialog/preload.js',
   'authdialog/preload.js',
+  'consentdialog/preload.js',
   'dialog/preload.js',
   'labview/preload.js',
   'settingsdialog/preload.js',
