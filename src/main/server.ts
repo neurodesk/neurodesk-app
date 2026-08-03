@@ -159,6 +159,9 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const containerJupyterPort = '8888';
   const imageRegistry = `vnmd/neurodesktop:${tag}`;
   const isPodman = engineType === EngineType.Podman;
+  const resolvedImageName = isPodman
+    ? `docker.io/${imageRegistry}`
+    : imageRegistry;
   const isTinyRange = engineType === EngineType.TinyRange;
   const isDocker = engineType === EngineType.Docker;
   const CVMFS_DISABLE = cvmfsMode === 'true';
@@ -246,7 +249,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         : ` --volume "${resolvedWorkingDir}":/data`
     );
   }
-  launchArgs.push(imageRegistry);
+  launchArgs.push(resolvedImageName);
 
   if (!overrideDefaultServerArgs) {
     launchArgs.push(
@@ -287,8 +290,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   let fixPermissionsCmd = isTinyRange
     ? ''
     : isWin
-    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
-    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
+    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${resolvedImageName} -R 1000:100 /home/jovyan >NUL 2>NUL`
+    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${resolvedImageName} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
   let removeCmd = `${
     isWin
@@ -365,7 +368,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
               echo "${engineType} command not found, running ${launchCmd}"
               ${launchCmd}
           )
-        FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${imageRegistry} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
+        FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${resolvedImageName} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
         ${fixPermissionsCmd}
         if "%IMAGE_EXISTS%"=="exists" (
             echo "Image exists. Starting container..."
@@ -425,7 +428,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         `
             : ''
         }
-        if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
+        if [[ "$(${engineType} image inspect ${resolvedImageName} --format='exists' 2> /dev/null)" == "exists" ]]; then
           ${stopCmd}
           ${volumeCreate}
           ${fixPermissionsCmd}

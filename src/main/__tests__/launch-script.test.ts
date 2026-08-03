@@ -228,6 +228,32 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('podman volume exists neurodesk-home');
       expect(script).toContain('podman volume create neurodesk-home');
     });
+
+    it('uses fully qualified docker.io/ image name for all commands', () => {
+      const script = generateLaunchScript(
+        baseParams({
+          engineType: EngineType.Podman,
+          tag: '2024-07-15'
+        })
+      );
+      // image inspect, run, and fixPermissions should all use docker.io/ prefix
+      expect(script).toContain(
+        'podman image inspect docker.io/vnmd/neurodesktop:2024-07-15'
+      );
+      expect(script).toContain(
+        'docker.io/vnmd/neurodesktop:2024-07-15 -R'
+      );
+      // The run command ends with the image name
+      expect(script).toContain('docker.io/vnmd/neurodesktop:2024-07-15');
+      // Should not use short name (except as substring of the fully qualified name)
+      const shortNameOccurrences = script
+        .split('vnmd/neurodesktop:2024-07-15')
+        .length - 1;
+      const fullyQualifiedOccurrences = script
+        .split('docker.io/vnmd/neurodesktop:2024-07-15')
+        .length - 1;
+      expect(shortNameOccurrences).toBe(fullyQualifiedOccurrences);
+    });
   });
 
   // ── TinyRange tests ──
