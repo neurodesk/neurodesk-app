@@ -351,6 +351,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         fi`
               : `# macOS: Podman runs in a VM, host-gateway does not reliably resolve to the macOS host
         HOST_GATEWAY_IP=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+        [ -z "$HOST_GATEWAY_IP" ] && HOST_GATEWAY_IP="host-gateway"
         echo "[neurodesk-app] macOS Podman: using resolved gateway IP: $HOST_GATEWAY_IP"`
             : ''
         }`;
