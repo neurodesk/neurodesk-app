@@ -256,9 +256,13 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
       isTinyRange
         ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R ${
             isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-          } /neurodesktop-storage; chmod -R 777 /neurodesktop-storage; chown -R ${
-            isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-          } /data; chmod -R 777 /data;`
+          } /neurodesktop-storage; chmod -R 777 /neurodesktop-storage;${
+            resolvedWorkingDir
+              ? ` find /data -maxdepth 1 -exec chown ${
+                  isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
+                } {} + 2>/dev/null || true; find /data -maxdepth 1 -exec chmod 777 {} + 2>/dev/null || true;`
+              : ''
+          }`
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
@@ -819,7 +823,16 @@ export class JupyterServer {
             } else {
               log.debug('no progress view');
             }
-            // reject(new Error('Failed to launch Neurodesk from stderr ' + this._restartCount + this._info.port + stderrChunks + stdoutChunks));
+            if (
+              this._info.engine === EngineType.TinyRange &&
+              !started &&
+              (data.includes('operation not permitted') ||
+                data.includes('FATAL') ||
+                data.includes('panic:'))
+            ) {
+              log.error(`TinyRange fatal error detected: ${data}`);
+              deadline.value = Date.now();
+            }
           }
         });
 
