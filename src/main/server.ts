@@ -195,15 +195,23 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     }
   }
 
+  // Environment the Neurodesk image needs regardless of engine. Docker and
+  // Podman pass these as run flags before the image name; TinyRange passes
+  // them after it, ahead of the -E prelude.
+  const containerEnvArgs = [
+    `-e NEURODESKTOP_VERSION=${tag}`,
+    `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
+    `-e GRANT_SUDO=yes`,
+    `-e NEURODESKTOP_CVMFS_STARTUP_MODE=eager`
+  ];
+
   let commonLaunchArgs = [
     `--shm-size=1gb`,
     `--privileged`,
     `--user=root`,
     `--name ${containerName}`,
     `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
-    `-e NEURODESKTOP_VERSION=${tag}`,
-    `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
-    `-e GRANT_SUDO=yes`,
+    ...containerEnvArgs,
     isWin
       ? `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
@@ -254,7 +262,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   if (!overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
-        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R ${
+        ? `${containerEnvArgs.join(' ')} -E "chmod 777 /dev/fuse; chown -R ${
             isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
           } /neurodesktop-storage; chmod -R 777 /neurodesktop-storage;${
             resolvedWorkingDir

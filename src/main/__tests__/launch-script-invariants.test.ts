@@ -178,42 +178,74 @@ describe('launch script invariants', () => {
   // ── Cross-engine env parity ──
 
   describe('environment variables', () => {
-    // Set by every engine. TinyRange does not use commonLaunchArgs, so it
-    // re-declares these inside its -E block; both paths must stay in sync.
-    const ALL_ENGINES_ENV = ['NEURODESKTOP_VERSION', 'CVMFS_DISABLE'];
+    // The image needs these regardless of engine. Docker/Podman emit them
+    // before the image name, TinyRange after it, but both build from the same
+    // containerEnvArgs list in server.ts — this is the test that keeps that
+    // single source of truth honest. A new common variable belongs here.
+    const ALL_ENGINES_ENV = [
+      `NEURODESKTOP_VERSION=${TAG}`,
+      'CVMFS_DISABLE=false',
+      'GRANT_SUDO=yes',
+      'NEURODESKTOP_CVMFS_STARTUP_MODE=eager'
+    ];
 
-    it.each(ALL_ENGINES_ENV)('%s is set for every engine', name => {
+    it.each(ALL_ENGINES_ENV)('-e %s is set for every engine', name => {
       for (const engineType of ENGINES) {
         expect(generateLaunchScript(baseParams({ engineType }))).toContain(
-          name
+          `-e ${name}`
         );
       }
     });
 
-    // Pins the current Docker/Podman-only env vars. TinyRange builds its own
-    // arg list and never picks up commonLaunchArgs, so these do NOT reach it.
-    // If that divergence is ever resolved, this test should be moved into
-    // ALL_ENGINES_ENV above rather than deleted.
-    const CONTAINER_ONLY_ENV = [
-      'GRANT_SUDO=yes',
-      'NEURODESKTOP_CVMFS_STARTUP_MODE=eager',
-      'OLLAMA_HOST'
-    ];
-
-    it.each(CONTAINER_ONLY_ENV)(
-      '%s is set for Docker/Podman and absent for TinyRange',
-      name => {
+    it('sets CVMFS_DISABLE=true for every engine in Download mode', () => {
+      for (const engineType of ENGINES) {
         expect(
-          generateLaunchScript(baseParams({ engineType: EngineType.Docker }))
-        ).toContain(name);
-        expect(
-          generateLaunchScript(baseParams({ engineType: EngineType.Podman }))
-        ).toContain(name);
-        expect(
-          generateLaunchScript(baseParams({ engineType: EngineType.TinyRange }))
-        ).not.toContain(name);
+          generateLaunchScript(baseParams({ engineType, cvmfsMode: 'true' }))
+        ).toContain('-e CVMFS_DISABLE=true');
       }
-    );
+    });
+
+    it('declares each common variable exactly once per command', () => {
+      // The two call sites used to be hand-duplicated; a partial dedup that
+      // leaves a stale copy behind shows up as a repeated -e on one command.
+      // Counting per line rather than per script, because Docker/Podman
+      // repeat the whole run command in each branch of the image-exists check.
+      for (const engineType of ENGINES) {
+        const script = generateLaunchScript(baseParams({ engineType }));
+        for (const name of ALL_ENGINES_ENV) {
+          const key = `-e ${name.split('=')[0]}=`;
+          const lines = script.split('\n').filter(l => l.includes(key));
+          expect(lines.length).toBeGreaterThan(0);
+          for (const line of lines) {
+            expect(line.split(key).length - 1).toBe(1);
+          }
+        }
+      }
+    });
+
+    // Docker/Podman-only: OLLAMA_HOST is meaningless without the
+    // --add-host=host.docker.internal mapping, which TinyRange does not have.
+    it('sets OLLAMA_HOST for Docker/Podman only', () => {
+      expect(
+        generateLaunchScript(baseParams({ engineType: EngineType.Docker }))
+      ).toContain('OLLAMA_HOST');
+      expect(
+        generateLaunchScript(baseParams({ engineType: EngineType.Podman }))
+      ).toContain('OLLAMA_HOST');
+      expect(
+        generateLaunchScript(baseParams({ engineType: EngineType.TinyRange }))
+      ).not.toContain('OLLAMA_HOST');
+    });
+
+    it('passes NB_UID/NB_GID to Docker/Podman only', () => {
+      // TinyRange fixes ownership through its -E chown prelude instead.
+      expect(
+        generateLaunchScript(baseParams({ engineType: EngineType.Docker }))
+      ).toContain('-e NB_UID=');
+      expect(
+        generateLaunchScript(baseParams({ engineType: EngineType.TinyRange }))
+      ).not.toContain('-e NB_UID=');
+    });
   });
 
   // ── Syntax validation ──
