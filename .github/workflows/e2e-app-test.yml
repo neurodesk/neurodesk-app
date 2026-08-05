@@ -15,7 +15,14 @@ on:
 #   TinyRange — Linux only (bundled in app, needs KVM for QEMU)
 
 jobs:
+  # Gate the (expensive, 60-minute) e2e matrix on the launch-script unit tests.
+  # They catch flag/ordering/syntax regressions in seconds, and cover the
+  # Windows and TinyRange rows that are commented out of the matrix below.
+  unit-test:
+    uses: ./.github/workflows/unit-test.yml
+
   e2e-test:
+    needs: unit-test
     strategy:
       fail-fast: false
       matrix:
