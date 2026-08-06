@@ -145,6 +145,13 @@ module.exports = {
       }
     ]
   },
+  overrides: [
+    {
+      // describe/it/expect/jest are injected by the test runner.
+      files: ['**/__tests__/**/*.ts', '**/__mocks__/**/*.ts'],
+      env: { jest: true }
+    }
+  ],
   settings: {
     react: {
       version: 'detect'

@@ -195,15 +195,23 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     }
   }
 
+  // Environment the Neurodesk image needs regardless of engine. Docker and
+  // Podman pass these as run flags before the image name; TinyRange passes
+  // them after it, ahead of the -E prelude.
+  const containerEnvArgs = [
+    `-e NEURODESKTOP_VERSION=${tag}`,
+    `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
+    `-e GRANT_SUDO=yes`,
+    `-e NEURODESKTOP_CVMFS_STARTUP_MODE=eager`
+  ];
+
   let commonLaunchArgs = [
     `--shm-size=1gb`,
     `--privileged`,
     `--user=root`,
     `--name ${containerName}`,
     `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
-    `-e NEURODESKTOP_VERSION=${tag}`,
-    `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
-    `-e GRANT_SUDO=yes`,
+    ...containerEnvArgs,
     isWin
       ? `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/neurodesktop-storage`
       : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
@@ -254,11 +262,15 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   if (!overrideDefaultServerArgs) {
     launchArgs.push(
       isTinyRange
-        ? `-e NEURODESKTOP_VERSION=${tag} -e CVMFS_DISABLE=${CVMFS_DISABLE} -E "chmod 777 /dev/fuse; chown -R ${
+        ? `${containerEnvArgs.join(' ')} -E "chmod 777 /dev/fuse; chown -R ${
             isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-          } /neurodesktop-storage; chmod -R 777 /neurodesktop-storage; chown -R ${
-            isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-          } /data; chmod -R 777 /data;`
+          } /neurodesktop-storage; chmod -R 777 /neurodesktop-storage;${
+            resolvedWorkingDir
+              ? ` find /data -maxdepth 1 -exec chown ${
+                  isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
+                } {} + 2>/dev/null || true; find /data -maxdepth 1 -exec chmod 777 {} + 2>/dev/null || true;`
+              : ''
+          }`
         : ''
     );
     for (const arg of serverLaunchArgsDefault) {
@@ -347,6 +359,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         fi`
               : `# macOS: Podman runs in a VM, host-gateway does not reliably resolve to the macOS host
         HOST_GATEWAY_IP=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+        [ -z "$HOST_GATEWAY_IP" ] && HOST_GATEWAY_IP="host-gateway"
         echo "[neurodesk-app] macOS Podman: using resolved gateway IP: $HOST_GATEWAY_IP"`
             : ''
         }`;
@@ -819,7 +832,16 @@ export class JupyterServer {
             } else {
               log.debug('no progress view');
             }
-            // reject(new Error('Failed to launch Neurodesk from stderr ' + this._restartCount + this._info.port + stderrChunks + stdoutChunks));
+            if (
+              this._info.engine === EngineType.TinyRange &&
+              !started &&
+              (data.includes('operation not permitted') ||
+                data.includes('FATAL') ||
+                data.includes('panic:'))
+            ) {
+              log.error(`TinyRange fatal error detected: ${data}`);
+              deadline.value = Date.now();
+            }
           }
         });
 

@@ -1,0 +1,39 @@
+name: Unit Tests
+
+# Fast feedback on the pure logic in src/main — most importantly the launch
+# script generator, whose output is otherwise only exercised by the 60-minute
+# e2e matrix (and only for the engine/platform rows that are enabled there).
+#
+# Runs on Linux only: the tests drive generateLaunchScript with an explicit
+# `platform` param, so Windows and macOS script generation is covered here
+# without needing those runners.
+
+on:
+  push:
+    branches: [master, 'release-*']
+  pull_request:
+  workflow_call: # Gate for e2e-app-test.yml
+  workflow_dispatch:
+
+jobs:
+  unit-test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: |
+          npm install --global yarn --prefer-offline
+          yarn install --frozen-lockfile
+
+      - name: Run tests
+        run: yarn test --ci
