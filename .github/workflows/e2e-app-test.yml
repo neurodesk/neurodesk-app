@@ -490,9 +490,26 @@ jobs:
           # Fix .cache ownership (NB_UID remapping can leave it owned by wrong UID)
           # Also pre-create subdirs that tests may need (e.g. datalad) so they're
           # owned by jovyan before pytest runs.
-          # Ignore chown errors from ephemeral FUSE/CVMFS files that vanish mid-traversal.
-          $ENGINE exec -u root "$CONTAINER_NAME" \
-            bash -c 'mkdir -p /home/jovyan/.cache/datalad && chown -R jovyan:jovyan /home/jovyan 2>/dev/null; true'
+          #
+          # cvmfs_cache is pruned, never chowned. It is CVMFS_CACHE_BASE (see
+          # config/cvmfs/default.local in the neurodesktop image) and the cvmfs2
+          # daemon runs as uid 103(cvmfs), which is why the startup script chowns
+          # it to cvmfs:root. Handing it to jovyan takes the cache and its
+          # cvmfs_talk socket away from the running daemon, and every /cvmfs read
+          # that is not already resident then fails with EIO — which shows up as
+          # CVMFS test failures plus module loads retrying until they time out.
+          #
+          # This only bites once CVMFS is mounted by the time this step runs:
+          # always with NEURODESKTOP_CVMFS_STARTUP_MODE=eager (server.ts mounts
+          # before Jupyter binds), and intermittently with lazy, where the
+          # deferred worker can win the race against this step.
+          #
+          # Errors are still ignored: ephemeral FUSE files vanish mid-traversal.
+          $ENGINE exec -u root "$CONTAINER_NAME" bash -c '
+            mkdir -p /home/jovyan/.cache/datalad
+            find /home/jovyan -path /home/jovyan/cvmfs_cache -prune -o \
+                 -exec chown jovyan:jovyan {} + 2>/dev/null
+            true'
 
           $ENGINE exec -u jovyan "$CONTAINER_NAME" \
             pytest /opt/tests/ -v
