@@ -337,7 +337,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         ${
           isPodman
             ? `REM Windows: Podman runs in a VM, host-gateway does not reliably resolve to the Windows host
-        FOR /F "tokens=2 delims=:" %%i IN ('ipconfig ^| findstr /C:"Default Gateway" ^| findstr /R "[0-9]"') DO (
+        FOR /F "tokens=2 delims=:" %%i IN ('ipconfig ^| findstr /C:"Default Gateway" ^| findstr /R "[0-9]*\.[0-9]"') DO (
           FOR /F "tokens=1" %%g IN ("%%i") DO SET HOST_GATEWAY_IP=%%g
         )`
             : ''

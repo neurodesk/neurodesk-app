@@ -608,6 +608,14 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('SET HOST_GATEWAY_IP=host-gateway');
     });
 
+    it('filters IPv6 gateways by requiring a dot in the ipconfig findstr pattern', () => {
+      const script = generateLaunchScript(
+        baseParams({ engineType: EngineType.Podman, platform: 'win32' })
+      );
+      // Must match only IPv4 addresses (contain dots), not IPv6 (fe80::...)
+      expect(script).toContain('findstr /R "[0-9]*.[0-9]"');
+    });
+
     it('does not probe for Docker on Windows', () => {
       const script = generateLaunchScript(baseParams({ platform: 'win32' }));
       expect(script).toContain('SET HOST_GATEWAY_IP=host-gateway');
