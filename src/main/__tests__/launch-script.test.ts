@@ -599,21 +599,16 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('HOST_GATEWAY_IP="host-gateway"');
     });
 
-    it('resolves the default gateway via ipconfig for Podman on Windows', () => {
+    it('resolves the default gateway via PowerShell Get-NetRoute for Podman on Windows', () => {
       const script = generateLaunchScript(
         baseParams({ engineType: EngineType.Podman, platform: 'win32' })
       );
-      expect(script).toContain('ipconfig');
-      expect(script).toContain('Default Gateway');
+      // Uses locale-independent PowerShell API instead of parsing ipconfig text
+      expect(script).toContain('Get-NetRoute');
+      expect(script).toContain("0.0.0.0/0");
       expect(script).toContain('SET HOST_GATEWAY_IP=host-gateway');
-    });
-
-    it('filters IPv6 gateways by requiring a dot in the ipconfig findstr pattern', () => {
-      const script = generateLaunchScript(
-        baseParams({ engineType: EngineType.Podman, platform: 'win32' })
-      );
-      // Must match only IPv4 addresses (contain dots), not IPv6 (fe80::...)
-      expect(script).toContain('findstr /R "[0-9]*.[0-9]"');
+      // Must NOT use ipconfig (locale-dependent)
+      expect(script).not.toContain('ipconfig');
     });
 
     it('does not probe for Docker on Windows', () => {
