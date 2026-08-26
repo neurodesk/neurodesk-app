@@ -605,7 +605,7 @@ describe('generateLaunchScript', () => {
       );
       // Uses locale-independent PowerShell API instead of parsing ipconfig text
       expect(script).toContain('Get-NetRoute');
-      expect(script).toContain("0.0.0.0/0");
+      expect(script).toContain('0.0.0.0/0');
       expect(script).toContain('SET HOST_GATEWAY_IP=host-gateway');
       // Must NOT use ipconfig (locale-dependent)
       expect(script).not.toContain('ipconfig');
