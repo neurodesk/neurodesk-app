@@ -14,6 +14,9 @@ on:
 #   Podman    — Linux only (pre-installed on ubuntu runners)
 #   TinyRange — Linux only (bundled in app, needs KVM for QEMU)
 
+permissions:
+  contents: read
+  
 jobs:
   # Gate the (expensive, 60-minute) e2e matrix on the launch-script unit tests.
   # They catch flag/ordering/syntax regressions in seconds, and cover the

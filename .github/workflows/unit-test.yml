@@ -15,6 +15,9 @@ on:
   workflow_call: # Gate for e2e-app-test.yml
   workflow_dispatch:
 
+permissions:
+  contents: read
+  
 jobs:
   unit-test:
     name: Unit tests
