@@ -98,7 +98,30 @@ Container naming: `neurodeskapp-<port>` for auto-started containers.
 
 ## Testing
 
-No test suite is currently configured (`yarn test` exits with error). Verify changes by building and running the app (`yarn dev`).
+```bash
+yarn test              # Jest unit tests (src/main/__tests__)
+yarn test -- --watch   # Watch mode
+```
+
+Two layers:
+
+- **Unit** (`src/main/__tests__/`, gated in CI by `.github/workflows/unit-test.yml`)
+  — pure logic only, no Electron or containers. The bulk of it covers
+  `generateLaunchScript`, driven through an explicit `platform` param so
+  Windows/macOS script generation is verified on a Linux runner.
+  - `launch-script.test.ts` — per-flag behavior (engines, mounts, env vars, host gateway, permissions)
+  - `launch-script-invariants.test.ts` — properties that must hold for any future
+    change: run flags precede the image name, no unresolved `{token}`/`{port}`
+    templates, cross-engine env parity, and `bash -n` / batch syntax validation
+    across every platform × engine combination
+  - `container-name.test.ts` — `resolveContainerName` with `child_process` mocked
+- **E2E** (`.github/workflows/e2e-app-test.yml`) — launches the built app, which
+  starts a real container via `server.ts`, then asserts against it. Gated on the
+  unit job.
+
+When changing the launch script, add the assertion to `launch-script.test.ts`
+and check whether it needs a new invariant. Verify UI changes by running the app
+(`yarn dev`) — there is no renderer test coverage.
 
 ## gstack
 
