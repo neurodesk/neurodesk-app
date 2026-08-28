@@ -184,7 +184,6 @@
     "node": ">=22.12.0"
   },
   "devDependencies": {
-    "@electron/notarize": "^3.1.1",
     "@jupyter-notebook/web-components": "0.9.1",
     "@types/ejs": "^3.1.0",
     "@types/jest": "^30.0.0",
@@ -222,11 +221,11 @@
   },
   "dependencies": {
     "@lumino/signaling": "^2.1.2",
-    "ejs": "^4.0.1",
+    "ejs": "^5.0.1",
     "electron-log": "^4.4.8",
     "fast-xml-parser": "^5.7.0",
     "fix-path": "^3.0.0",
-    "js-yaml": "^4.3.1",
+    "js-yaml": "^4.3.2",
     "posthog-node": "^5.47.3",
     "semver": "^7.5.2",
     "toml": "^3.0.0",
