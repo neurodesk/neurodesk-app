@@ -1,0 +1,129 @@
+commonLaunchArgs:
+  - "--shm-size=1gb"
+  - "--privileged"
+  - "--user=root"
+  - "--name {containerName}"
+  - "-e NEURODESKTOP_VERSION={tag}"
+  - "-e CVMFS_DISABLE={cvmfsDisable}"
+  - "-e GRANT_SUDO=yes"
+  - "-e NEURODESKTOP_CVMFS_STARTUP_MODE=eager"
+
+# Engine-specific configurations
+engines:
+  # Base configurations for each engine
+  podman: &podman_base
+    base_cmd: "podman run -d --rm"
+
+  docker: &docker_base
+    base_cmd: "docker run -d --rm"
+
+  tinyrange: &tinyrange_base
+    base_cmd: "{tinyrangePath}"
+
+
+# Platform and engine-specific additional directory configurations
+additionalDirConfig:
+  tinyrange:
+    windows: '--mount-rw "{additionalDir}":/data'
+    unix: '--mount-rw "{additionalDir}":/data'
+  podman:
+    windows: '--volume "{additionalDir}":/data'
+    unix: '--volume "{additionalDir}":/data'
+  docker:
+    windows: '--volume "{additionalDir}":/data'
+    unix: '--volume "{additionalDir}":/data'
+
+# Launch arguments matrix (engine x platform)
+launchArgs:
+  podman:
+    windows:
+      <<: *podman_base
+      args:
+        - "{base_cmd}"
+        - "{commonLaunchArgs}"
+        - "-p 127.0.0.1:{port}:8888"
+        - "-e NB_UID=1000 -e NB_GID=1000 -v C://neurodesktop-storage:/neurodesktop-storage"
+        - "-v {volume_mount}:/home/jovyan"
+        - "--network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6"
+        - '--add-host=host.docker.internal:!HOST_GATEWAY_IP! -e OLLAMA_HOST="http://host.docker.internal:11434"'
+        - "{imageRegistry}"
+    unix:
+      <<: *podman_base
+      args:
+        - "{base_cmd}"
+        - "{commonLaunchArgs}"
+        - "-p 127.0.0.1:{port}:8888"
+        - '-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ~/neurodesktop-storage:/neurodesktop-storage'
+        - "-v {volume_mount}:/home/jovyan"
+        - "--network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6"
+        - '--add-host=host.docker.internal:${HOST_GATEWAY_IP} -e OLLAMA_HOST="http://host.docker.internal:11434"'
+        - "{imageRegistry}"
+
+  docker:
+    windows:
+      <<: *docker_base
+      args:
+        - "{base_cmd}"
+        - "{commonLaunchArgs}"
+        - "-p 127.0.0.1:{port}:8888"
+        - "-e NB_UID=1000 -e NB_GID=1000 -v C://neurodesktop-storage:/neurodesktop-storage"
+        - "--mount source={volume_mount},target=/home/jovyan --mac-address=88:75:56:ef:3e:d6"
+        - '--add-host=host.docker.internal:!HOST_GATEWAY_IP! -e OLLAMA_HOST="http://host.docker.internal:11434"'
+        - "{imageRegistry}"
+    unix:
+      <<: *docker_base
+      args:
+        - "{base_cmd}"
+        - "{commonLaunchArgs}"
+        - "-p 127.0.0.1:{port}:8888"
+        - '-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ~/neurodesktop-storage:/neurodesktop-storage'
+        - "--mount source={volume_mount},target=/home/jovyan --mac-address=88:75:56:ef:3e:d6"
+        - '--add-host=host.docker.internal:${HOST_GATEWAY_IP} -e OLLAMA_HOST="http://host.docker.internal:11434"'
+        - "{imageRegistry}"
+
+  tinyrange:
+    windows:
+      <<: *tinyrange_base
+      args:
+        - "{base_cmd}"
+        - "login"
+        - "--buildDir {buildDir}"
+        - "--oci {imageRegistry}"
+        - "--forward {port}"
+        - "-m //lib/qemu:user"
+        - "--mount-rw {storageDir}:/neurodesktop-storage"
+        - "--volume neurodeskHome,20480,/home,persist"
+        - "--auto-scale"
+    unix:
+      <<: *tinyrange_base
+      args:
+        - "{base_cmd}"
+        - "login"
+        - "--buildDir {buildDir}"
+        - "--oci {imageRegistry}"
+        - "--forward {port}"
+        - "-m //lib/qemu:user"
+        - "--mount-rw {storageDir}:/neurodesktop-storage"
+        - "--volume neurodeskHome,20480,/home,persist"
+        - "--auto-scale"
+
+# TinyRange -E prelude (env vars + fuse/permission setup before server args)
+# {tinyrangePrelude} is engine-specific and injected by server.ts
+tinyrangePrelude:
+  windows: '-e NEURODESKTOP_VERSION={tag} -e CVMFS_DISABLE={cvmfsDisable} -e GRANT_SUDO=yes -e NEURODESKTOP_CVMFS_STARTUP_MODE=eager -E "chmod 777 /dev/fuse; chown -R 1000:1000 /neurodesktop-storage; chmod -R 777 /neurodesktop-storage;'
+  unix: '-e NEURODESKTOP_VERSION={tag} -e CVMFS_DISABLE={cvmfsDisable} -e GRANT_SUDO=yes -e NEURODESKTOP_CVMFS_STARTUP_MODE=eager -E "chmod 777 /dev/fuse; chown -R "$(id -u)":"$(id -g)" /neurodesktop-storage; chmod -R 777 /neurodesktop-storage;'
+
+# Default server launch arguments (applied if not overridden)
+# For Docker/Podman, {serverPort} resolves to 8888 (the container-internal port).
+# For TinyRange, {serverPort} resolves to {port} (forwarded port).
+defaultServerArgs:
+  - "start.sh jupyter lab --ServerApp.password=''"
+  - "--no-browser"
+  - "--expose-app-in-browser"
+  - "--ServerApp.token='{token}'"
+  - "--ServerApp.port={serverPort}"
+  - "--LabApp.quit_button=False"
+  - "--NotebookIntelligence.github_access_token=remember"
+
+# Extra args appended after defaultServerArgs for TinyRange only
+tinyrangePostArgs: '--FileContentsManager.delete_to_trash=False"'

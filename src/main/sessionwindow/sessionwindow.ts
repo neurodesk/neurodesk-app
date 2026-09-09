@@ -119,7 +119,9 @@ export class SessionWindow implements IDisposable {
 
   private async _createServerForSession(progressView?: ProgressView) {
     const serverOptions: JupyterServer.IOptions = {
-      workingDirectory: this._sessionConfig.resolvedWorkingDirectory
+      workingDirectory: this._sessionConfig.resolvedWorkingDirectory,
+      containerConfigName: this._sessionConfig.containerConfigName,
+      imageVersion: this._sessionConfig.imageVersion || undefined
     };
 
     console.debug('serverOptions ', serverOptions);
@@ -467,7 +469,12 @@ export class SessionWindow implements IDisposable {
 
     this._evm.registerEventHandler(
       EventTypeMain.CreateNewSession,
-      async (event, type: 'notebook' | 'blank') => {
+      async (
+        event,
+        type: 'notebook' | 'blank',
+        containerConfigName?: string,
+        imageVersion?: string
+      ) => {
         if (event.sender !== this.contentView?.webContents) {
           return;
         }
@@ -478,7 +485,12 @@ export class SessionWindow implements IDisposable {
           `
         );
 
-        const sessionConfig = SessionConfig.createLocal();
+        const sessionConfig = SessionConfig.createLocal(
+          undefined,
+          undefined,
+          containerConfigName,
+          imageVersion
+        );
         this._sessionConfig = sessionConfig;
         this._wsSettings = new WorkspaceSettings(
           sessionConfig.workingDirectory
@@ -565,12 +577,12 @@ export class SessionWindow implements IDisposable {
 
     this._evm.registerEventHandler(
       EventTypeMain.CreateNewRemoteSession,
-      async event => {
+      async (event, remoteUrls: string[]) => {
         if (event.sender !== this.contentView?.webContents) {
           return;
         }
 
-        this._selectRemoteServerUrl();
+        this._selectRemoteServerUrl(remoteUrls);
       }
     );
 
@@ -873,7 +885,7 @@ export class SessionWindow implements IDisposable {
     });
   }
 
-  private async _selectRemoteServerUrl() {
+  private async _selectRemoteServerUrl(remoteUrls?: string[]) {
     this._remoteServerSelectDialog = new RemoteServerSelectDialog({
       isDarkTheme: this._isDarkTheme,
       parent: this._window,
@@ -883,11 +895,8 @@ export class SessionWindow implements IDisposable {
 
     this._remoteServerSelectDialog.load();
 
-    const runningServers: string[] = [
-      'https://play.neurodesk.cloud.edu.au/',
-      'https://play-america.neurodesk.org/',
-      'https://play-europe.neurodesk.org/'
-    ];
+    const runningServers: string[] =
+      remoteUrls && remoteUrls.length > 0 ? [...remoteUrls] : [];
     this._remoteServerSelectDialog.setRunningServerList(runningServers);
   }
 

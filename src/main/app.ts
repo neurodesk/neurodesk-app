@@ -825,6 +825,14 @@ export class JupyterApplication implements IApplication, IDisposable {
     });
 
     this._evm.registerSyncEventHandler(
+      EventTypeMain.FetchReleases,
+      async (event, releaseHistoryUrl: string, defaultVersion: string) => {
+        const { fetchReleases } = await import('./releases/releaseFetcher');
+        return fetchReleases(releaseHistoryUrl, defaultVersion);
+      }
+    );
+
+    this._evm.registerSyncEventHandler(
       EventTypeMain.ClearHistory,
       async (event, options: IClearHistoryOptions) => {
         if (options.recentRemoteURLs) {

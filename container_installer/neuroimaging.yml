@@ -1,0 +1,12 @@
+title: neuroimaging
+defaultVersion: "2026-07-11"
+registry: vnmd/neurodesktop
+releaseHistoryUrl: https://raw.githubusercontent.com/neurodesk/neurodesk.github.io-astro/refs/heads/main/src/content/docs/overview/release-history/index.mdx
+containerName: neurodeskapp
+volumeMount: neurodesk-home
+description: |
+  Neuroimaging tools and resources for neuroimaging research and analysis.
+remoteUrl:
+  - https://play.neurodesk.cloud.edu.au/
+  - https://play-america.neurodesk.org/
+  - https://play-europe.neurodesk.org/

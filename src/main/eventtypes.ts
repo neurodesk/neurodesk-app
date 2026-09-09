@@ -54,7 +54,8 @@ export enum EventTypeMain {
   ShowLogs = 'show-logs',
   GetChildProcressLog = 'get-child-process-log',
   SetAuthDialogResponse = 'set-auth-dialog-response',
-  SetTelemetryConsent = 'set-telemetry-consent'
+  SetTelemetryConsent = 'set-telemetry-consent',
+  FetchReleases = 'fetch-releases'
 }
 
 // events sent to Renderer process

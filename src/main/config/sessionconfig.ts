@@ -22,6 +22,8 @@ export class SessionConfig {
   partition: string = '';
   workingDirectory: string = '';
   filesToOpen: string[] = [];
+  containerConfigName: string = '';
+  imageVersion: string = '';
   lastOpened: Date = new Date();
 
   url: URL;
@@ -31,7 +33,9 @@ export class SessionConfig {
 
   static createLocal(
     workingDirectory?: string,
-    filesToOpen?: string[]
+    filesToOpen?: string[],
+    containerConfigName?: string,
+    imageVersion?: string
   ): SessionConfig {
     const sessionConfig = new SessionConfig();
     sessionConfig.workingDirectory =
@@ -40,6 +44,8 @@ export class SessionConfig {
     if (filesToOpen) {
       sessionConfig.setFilesToOpen(filesToOpen);
     }
+    sessionConfig.containerConfigName = containerConfigName || '';
+    sessionConfig.imageVersion = imageVersion || '';
 
     return sessionConfig;
   }
@@ -200,6 +206,9 @@ export class SessionConfig {
     if ('filesToOpen' in jsonData) {
       this.filesToOpen = [...jsonData.filesToOpen];
     }
+    if ('imageVersion' in jsonData) {
+      this.imageVersion = jsonData.imageVersion;
+    }
   }
 
   serialize(): any {
@@ -229,6 +238,10 @@ export class SessionConfig {
 
     if (this.filesToOpen.length > 0) {
       jsonData.filesToOpen = [...this.filesToOpen];
+    }
+
+    if (this.imageVersion !== '') {
+      jsonData.imageVersion = this.imageVersion;
     }
 
     return jsonData;

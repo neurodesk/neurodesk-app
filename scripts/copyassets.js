@@ -5,6 +5,7 @@ const watch = require('node-watch');
 const platform = process.platform;
 const buildDir = path.resolve('./build');
 const srcDir = path.resolve('./src');
+const containerConfigDir = path.resolve('./container_installer');
 
 function walkSync(currentDirPath, callback) {
   fs.readdirSync(currentDirPath).forEach(name => {
@@ -61,6 +62,22 @@ function copyAssests() {
     path.join(dest, '../app-assets', 'neurodesk.svg')
   );
   fs.copySync('neurodesktop.toml', path.join(dest, 'neurodesktop.toml'));
+  fs.copySync(
+    'src/main/config/baseContainerConfig.yml',
+    path.join(dest, 'main/config/baseContainerConfig.yml')
+  );
+  // Copy yml files from container_installer directory into build directory
+  if (fs.existsSync(containerConfigDir)) {
+    walkSync(containerConfigDir, srcPath => {
+      const destPath = srcPath.replace(
+        containerConfigDir,
+        path.join(dest, 'container_installer')
+      );
+      if (srcPath.endsWith('.yml')) {
+        fs.copySync(srcPath, destPath);
+      }
+    });
+  }
   fs.copySync('package.json', path.join(dest, 'package.json'));
 
   const toolkitPath = path.join(

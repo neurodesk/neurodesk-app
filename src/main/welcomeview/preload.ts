@@ -27,11 +27,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isDarkTheme: () => {
     return ipcRenderer.invoke(EventTypeMain.IsDarkTheme);
   },
+  fetchReleases: (
+    releaseHistoryUrl: string,
+    defaultVersion: string
+  ): Promise<string[]> => {
+    return ipcRenderer.invoke(
+      EventTypeMain.FetchReleases,
+      releaseHistoryUrl,
+      defaultVersion
+    );
+  },
   newSession: (
-    type: 'notebook' | 'blank' | 'open' | 'open-file' | 'open-folder' | 'remote'
+    type:
+      | 'notebook'
+      | 'blank'
+      | 'open'
+      | 'open-file'
+      | 'open-folder'
+      | 'remote',
+    containerConfigName?: string,
+    remoteUrl?: string[],
+    imageVersion?: string
   ) => {
     if (type === 'notebook' || type === 'blank') {
-      ipcRenderer.send(EventTypeMain.CreateNewSession, type);
+      ipcRenderer.send(
+        EventTypeMain.CreateNewSession,
+        type,
+        containerConfigName,
+        imageVersion
+      );
     } else if (type === 'open') {
       ipcRenderer.send(EventTypeMain.OpenFileOrFolder);
     } else if (type === 'open-file') {
@@ -39,7 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     } else if (type === 'open-folder') {
       ipcRenderer.send(EventTypeMain.OpenFolder);
     } else if (type === 'remote') {
-      ipcRenderer.send(EventTypeMain.CreateNewRemoteSession);
+      ipcRenderer.send(EventTypeMain.CreateNewRemoteSession, remoteUrl);
     }
   },
   openRecentSession(sessionIndex: number) {
