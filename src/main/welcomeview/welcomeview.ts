@@ -185,7 +185,7 @@ export class WelcomeView {
           }
 
           .app-ui-dark .app-card {
-              background: #1e1e1e;
+              background: #4f4f4f;
               box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
           }
 
@@ -194,7 +194,7 @@ export class WelcomeView {
           }
 
           .app-ui-dark .app-card:hover {
-              box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+              box-shadow: 0 20px 40px rgba(66, 66, 66, 0.4);
           }
 
           .app-title {
@@ -447,7 +447,7 @@ export class WelcomeView {
             }
 
             .app-ui-dark .search-input {
-                background: rgba(30, 30, 30, 0.95);
+                background: rgba(81, 81, 81, 0.95);
                 color: #e2e8f0;
                 box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
             }
