@@ -15,7 +15,6 @@ import {
   EngineType,
   KeyValueMap,
   resolveWorkingDirectory,
-  serverLaunchArgsDefault,
   SettingType,
   userSettings,
   WorkspaceSettings
@@ -24,6 +23,7 @@ import { randomBytes } from 'crypto';
 import { ProgressView } from './progressview/progressview';
 import {
   ContainerConfigParser,
+  PlatformType,
   VariableContext
 } from './config/containerConfigParser';
 
@@ -92,19 +92,23 @@ function getLinuxFileSystemType(directory: string): string {
 }
 
 export interface ILaunchScriptParams {
+  /** Loaded container configuration — the single source of the launch args. */
+  parser: ContainerConfigParser;
   engineType: EngineType;
+  /** Node platform string: 'win32' | 'darwin' | 'linux'. */
+  platform: string;
   port: number;
   token: string;
-  tag: string;
-  platform: string;
-  workingDirectory: string;
   cvmfsMode: string;
-  overrideDefaultServerArgs: boolean;
-  tinyrangePath: string;
+  /** Host OS version (Ubuntu YYMM); empty when unknown. */
   osVersion: string;
-  containerName: string;
-  isNfsWorkingDirectory?: boolean;
+  tinyrangePath: string;
+  /** Host directory mounted at /neurodesktop-storage. Defaults per platform. */
   storageDirectory?: string;
+  /** Host directory mounted at /data, if the user configured one. */
+  additionalDirectory?: string;
+  isNfsAdditionalDirectory?: boolean;
+  overrideDefaultServerArgs?: boolean;
 }
 
 /**
@@ -140,194 +144,124 @@ export function resolveContainerName(
 }
 
 /**
+ * Host directory mounted at /neurodesktop-storage when the user has not set
+ * one in the settings.
+ */
+export function getDefaultStorageDirectory(
+  platform: string = process.platform
+): string {
+  return platform === 'win32'
+    ? 'C:/neurodesktop-storage'
+    : path.join(os.homedir(), 'neurodesktop-storage');
+}
+
+/**
  * Pure function that generates the launch script content.
+ *
+ * Every run flag, the image reference and the server args come from
+ * baseContainerConfig.yml via ContainerConfigParser.buildLaunchArgs — this
+ * function only wraps the resulting command in the engine lifecycle
+ * scaffolding (image check, pull, stale container removal, log follow).
+ *
  * Exported for testing.
  */
 export function generateLaunchScript(params: ILaunchScriptParams): string {
   const {
+    parser,
     engineType,
+    platform,
     port,
     token,
-    tag,
-    platform,
-    workingDirectory,
     cvmfsMode,
-    overrideDefaultServerArgs,
-    tinyrangePath,
     osVersion,
-    isNfsWorkingDirectory = false
+    tinyrangePath,
+    storageDirectory,
+    additionalDirectory = '',
+    isNfsAdditionalDirectory = false,
+    overrideDefaultServerArgs = false
   } = params;
 
   const isWin = platform === 'win32';
   const isLinux = platform === 'linux';
-  const strPort = port.toString();
-  const containerJupyterPort = '8888';
-  const imageRegistry = `vnmd/neurodesktop:${tag}`;
-  const isPodman = engineType === EngineType.Podman;
-  const resolvedImageName = isPodman
-    ? `docker.io/${imageRegistry}`
-    : imageRegistry;
+  const platformType: PlatformType = isWin ? 'windows' : 'unix';
   const isTinyRange = engineType === EngineType.TinyRange;
-  const isDocker = engineType === EngineType.Docker;
-  const CVMFS_DISABLE = cvmfsMode === 'true';
-  const defaultStorageDir = isWin
-    ? 'C://neurodesktop-storage'
-    : '~/neurodesktop-storage';
-  const neurodesktopStorageDir = params.storageDirectory
-    ? isWin
-      ? params.storageDirectory.replace(/\\/g, '//')
-      : params.storageDirectory
-    : defaultStorageDir;
-  const containerName = params.containerName;
+  const isPodman = engineType === EngineType.Podman;
+  const strPort = port.toString();
 
-  let resolvedWorkingDir = '';
-  if (workingDirectory) {
-    if (isNfsWorkingDirectory) {
-      // Skip statSync for NFS — may hang on stale mounts.
-      // Trust that createLaunchScript already validated via /proc/mounts.
-      resolvedWorkingDir = resolveWorkingDirectory(workingDirectory, false);
-    } else {
-      const candidate = resolveWorkingDirectory(workingDirectory, false);
-      try {
-        if (candidate && fs.statSync(candidate).isDirectory()) {
-          resolvedWorkingDir = candidate;
-        }
-      } catch {
-        log.error(
-          `Working directory ${candidate} is not accessible, skipping mount`
-        );
-      }
-    }
-  }
+  const imageName = parser.getImageName();
+  const volumeMount = parser.getVolumeMount();
+  // The same name the config puts in --name, so the lifecycle commands below
+  // can never address a different container than the one being launched.
+  const containerName = parser.getContainerName();
 
-  // Environment the Neurodesk image needs regardless of engine. Docker and
-  // Podman pass these as run flags before the image name; TinyRange passes
-  // them after it, ahead of the -E prelude.
-  const containerEnvArgs = [
-    `-e NEURODESKTOP_VERSION=${tag}`,
-    `-e CVMFS_DISABLE=${CVMFS_DISABLE}`,
-    `-e GRANT_SUDO=yes`,
-    `-e NEURODESKTOP_CVMFS_STARTUP_MODE=eager`
-  ];
+  // Keep path separators forward-slashed so the generated script is identical
+  // no matter which OS generates it (the Windows tests run on Linux).
+  const resolvedStorageDirectory =
+    storageDirectory || getDefaultStorageDirectory(platform);
+  const storageDir = isWin
+    ? resolvedStorageDirectory.replace(/\\/g, '//')
+    : resolvedStorageDirectory;
+  const buildDir = `${storageDir}/build`;
+  const additionalDir = isWin
+    ? additionalDirectory.replace(/\\/g, '/')
+    : additionalDirectory;
 
-  let commonLaunchArgs = [
-    `--shm-size=1gb`,
-    `--privileged`,
-    `--user=root`,
-    `--name ${containerName}`,
-    `-p 127.0.0.1:${strPort}:${containerJupyterPort}`,
-    ...containerEnvArgs,
-    isWin
-      ? `-e NB_UID=1000 -e NB_GID=1000 -v ${neurodesktopStorageDir}:/neurodesktop-storage`
-      : `-e NB_UID="$(id -u)" -e NB_GID="$(id -g)" -v ${neurodesktopStorageDir}:/neurodesktop-storage`
-  ];
+  // Docker and Podman publish the host port onto the container's fixed
+  // Jupyter port; TinyRange forwards the host port and serves on it directly.
+  const serverPort = isTinyRange ? strPort : parser.getContainerPort();
 
-  let launchArgs: string[] = [];
-  if (isTinyRange) {
-    const buildDir = path.join(neurodesktopStorageDir, 'build');
-    launchArgs = [
-      tinyrangePath,
-      'login',
-      `--buildDir ${buildDir.replace(/\\/g, '//')}`,
-      `--oci ${imageRegistry}`,
-      `--forward ${strPort}`,
-      '-m //lib/qemu:user',
-      `--mount-rw ${neurodesktopStorageDir}:/neurodesktop-storage`,
-      `--volume neurodeskHome,${20 * 1024},/home,persist`,
-      '--auto-scale'
-    ];
-  } else {
-    launchArgs = [
-      `${engineType} run -d --rm`,
-      ...commonLaunchArgs,
-      isPodman
-        ? `-v neurodesk-home:/home/jovyan --network bridge:ip=10.88.0.10,mac=88:75:56:ef:3e:d6`
-        : `--mount source=neurodesk-home,target=/home/jovyan --mac-address=88:75:56:ef:3e:d6`,
-      `--add-host=host.docker.internal:${
-        isWin ? '!HOST_GATEWAY_IP!' : '${HOST_GATEWAY_IP}'
-      } -e OLLAMA_HOST="http://host.docker.internal:11434"`,
-      parseInt(osVersion) >= 2310 && isDocker
-        ? '--security-opt apparmor=neurodeskapp'
-        : ''
-    ];
-  }
+  const context: VariableContext = {
+    port: strPort,
+    serverPort,
+    token,
+    cvmfsDisable: cvmfsMode,
+    tinyrangePath,
+    buildDir,
+    storageDir,
+    additionalDir,
+    volumeMount
+  };
 
-  if (resolvedWorkingDir) {
-    if (isWin) {
-      resolvedWorkingDir = resolvedWorkingDir.replace(/\\/g, '/');
-    }
-    launchArgs.push(
-      isTinyRange
-        ? `--mount-rw "${resolvedWorkingDir.replace(/\//g, '//')}":/data`
-        : ` --volume "${resolvedWorkingDir}":/data`
-    );
-  }
-  launchArgs.push(resolvedImageName);
+  const launchCmd = parser
+    .buildLaunchArgs(engineType, context, {
+      platform: platformType,
+      osVersion,
+      additionalDir,
+      includeServerArgs: !overrideDefaultServerArgs
+    })
+    .filter(arg => arg !== '')
+    .join(' ');
 
-  if (!overrideDefaultServerArgs) {
-    launchArgs.push(
-      isTinyRange
-        ? `${containerEnvArgs.join(' ')} -E "chmod 777 /dev/fuse; chown -R ${
-            isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-          } /neurodesktop-storage; chmod -R 777 /neurodesktop-storage;${
-            resolvedWorkingDir
-              ? ` find /data -maxdepth 1 -exec chown ${
-                  isWin ? '1000:1000' : '"$(id -u)":"$(id -g)"'
-                } {} + 2>/dev/null || true; find /data -maxdepth 1 -exec chmod 777 {} + 2>/dev/null || true;`
-              : ''
-          }`
-        : ''
-    );
-    for (const arg of serverLaunchArgsDefault) {
-      launchArgs.push(
-        arg
-          .replace('{token}', token)
-          .replace('{port}', isTinyRange ? strPort : containerJupyterPort)
-      );
-    }
-    if (isTinyRange) {
-      launchArgs.push('--FileContentsManager.delete_to_trash=False"');
-    }
-  }
-
-  let launchCmd = launchArgs.join(' ');
-
-  let volumeCheck = `${
-    isWin
-      ? `${engineType} volume inspect neurodesk-home >NUL 2>&1 || ${engineType} volume create neurodesk-home`
-      : `${engineType} volume exists neurodesk-home &> /dev/null || ${engineType} volume create neurodesk-home`
-  }`;
-  let volumeCreate = `${isPodman ? `${volumeCheck}` : ''}`;
+  const volumeCheck = isWin
+    ? `${engineType} volume inspect ${volumeMount} >NUL 2>&1 || ${engineType} volume create ${volumeMount}`
+    : `${engineType} volume exists ${volumeMount} &> /dev/null || ${engineType} volume create ${volumeMount}`;
+  const volumeCreate = isPodman ? volumeCheck : '';
 
   // Fix ownership of /home/jovyan on the persistent volume before launching.
   // The volume may have .cache or other dirs owned by root from a previous run
   // (e.g. when --user=root processes create files before the entrypoint chowns).
   // This prevents "Permission denied" errors like: mkdir: cannot create directory '/home/jovyan/.cache/run-one'
   // This runs in a separate container (no FUSE/CVMFS active), so chown -R is safe.
-  let fixPermissionsCmd = isTinyRange
+  const fixPermissionsCmd = isTinyRange
     ? ''
     : isWin
-    ? `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${resolvedImageName} -R 1000:100 /home/jovyan >NUL 2>NUL`
-    : `${engineType} run --rm --entrypoint chown -v neurodesk-home:/home/jovyan ${resolvedImageName} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
+    ? `${engineType} run --rm --entrypoint chown -v ${volumeMount}:/home/jovyan ${imageName} -R 1000:100 /home/jovyan >NUL 2>NUL`
+    : `${engineType} run --rm --entrypoint chown -v ${volumeMount}:/home/jovyan ${imageName} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
 
-  let removeCmd = `${
-    isWin
-      ? `${engineType} container exists ${containerName} >NUL 2>&1 && ${engineType} rm -f ${containerName} >NUL 2>&1`
-      : `${engineType} container exists ${containerName} &> /dev/null && ${
-          isLinux ? 'timeout 30 ' : ''
-        }${engineType} rm -f ${containerName} &> /dev/null`
-  }`;
-  let stopCmd = `${
-    isPodman
-      ? `${removeCmd}`
-      : isTinyRange
-      ? ``
-      : isWin
-      ? `${engineType} rm -f ${containerName} >NUL 2>&1`
-      : `${
-          isLinux ? 'timeout 30 ' : ''
-        }${engineType} rm -f ${containerName} &> /dev/null`
-  }`;
+  const removeCmd = isWin
+    ? `${engineType} container exists ${containerName} >NUL 2>&1 && ${engineType} rm -f ${containerName} >NUL 2>&1`
+    : `${engineType} container exists ${containerName} &> /dev/null && ${
+        isLinux ? 'timeout 30 ' : ''
+      }${engineType} rm -f ${containerName} &> /dev/null`;
+  const stopCmd = isPodman
+    ? removeCmd
+    : isTinyRange
+    ? ''
+    : isWin
+    ? `${engineType} rm -f ${containerName} >NUL 2>&1`
+    : `${
+        isLinux ? 'timeout 30 ' : ''
+      }${engineType} rm -f ${containerName} &> /dev/null`;
 
   let script: string;
 
@@ -385,7 +319,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
               echo "${engineType} command not found, running ${launchCmd}"
               ${launchCmd}
           )
-        FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${resolvedImageName} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
+        FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${imageName} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
         ${fixPermissionsCmd}
         if "%IMAGE_EXISTS%"=="exists" (
             echo "Image exists. Starting container..."
@@ -397,7 +331,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
             echo "Image does not exist. Start downloading..."
             ${stopCmd}
             ${volumeCreate}
-            ${engineType} pull docker.io/${imageRegistry}
+            ${engineType} pull ${imageName}
             ${launchCmd}
         )
         ${engineType} logs -f ${containerName}
@@ -415,37 +349,36 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         echo $HOST_GATEWAY_IP
         echo "[neurodesk-app] Launch script started at $(date -Iseconds)"
         echo "[neurodesk-app] Engine: ${engineType}"
-        echo "[neurodesk-app] Working directory: ${
-          resolvedWorkingDir || 'none'
-        }"
-        echo "[neurodesk-app] NFS working directory: ${isNfsWorkingDirectory}"
+        echo "[neurodesk-app] Image: ${imageName}"
+        echo "[neurodesk-app] Additional directory: ${additionalDir || 'none'}"
+        echo "[neurodesk-app] NFS additional directory: ${isNfsAdditionalDirectory}"
         echo "[neurodesk-app] Container name: ${containerName}"
         echo "[neurodesk-app] Port: ${strPort}"
         ${
-          resolvedWorkingDir
-            ? `echo "[neurodesk-app] Working dir mount info: $(mount | grep '${resolvedWorkingDir
+          additionalDir
+            ? `echo "[neurodesk-app] Additional dir mount info: $(mount | grep '${additionalDir
                 .split('/')
                 .slice(0, 3)
                 .join('/')}' 2>/dev/null || echo 'no mount found')"`
             : ''
         }
         ${
-          resolvedWorkingDir
-            ? `echo "[neurodesk-app] Working dir accessible: $(ls -ld '${resolvedWorkingDir}' 2>&1)"`
+          additionalDir
+            ? `echo "[neurodesk-app] Additional dir accessible: $(ls -ld '${additionalDir}' 2>&1)"`
             : ''
         }
         ${
-          isNfsWorkingDirectory && resolvedWorkingDir
+          isNfsAdditionalDirectory && additionalDir
             ? `
-        if ! timeout 5 ls -ld '${resolvedWorkingDir}' &>/dev/null; then
-          echo "[neurodesk-app] ERROR: Working directory not accessible (NFS mount may be stale)" >&2
+        if ! timeout 5 ls -ld '${additionalDir}' &>/dev/null; then
+          echo "[neurodesk-app] ERROR: Additional directory not accessible (NFS mount may be stale)" >&2
           exit 1
         fi
-        echo "[neurodesk-app] NFS mount check passed for ${resolvedWorkingDir}"
+        echo "[neurodesk-app] NFS mount check passed for ${additionalDir}"
         `
             : ''
         }
-        if [[ "$(${engineType} image inspect ${resolvedImageName} --format='exists' 2> /dev/null)" == "exists" ]]; then
+        if [[ "$(${engineType} image inspect ${imageName} --format='exists' 2> /dev/null)" == "exists" ]]; then
           ${stopCmd}
           ${volumeCreate}
           ${fixPermissionsCmd}
@@ -454,9 +387,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         else
           ${stopCmd}
           ${volumeCreate}
-          ${
-            isLinux ? 'timeout 300 ' : ''
-          }${engineType} pull docker.io/${imageRegistry}
+          ${isLinux ? 'timeout 300 ' : ''}${engineType} pull ${imageName}
           ${fixPermissionsCmd}
           CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
           LAUNCH_EXIT=$?
@@ -489,6 +420,42 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   return script;
 }
 
+/**
+ * Detect the host OS version used to gate conditional run flags.
+ * Returns '' when it cannot be determined (non-Linux, or no lsb_release).
+ */
+function getHostOsVersion(): string {
+  if (os.platform() !== 'linux') {
+    return '';
+  }
+  try {
+    return execSync('lsb_release -a | grep Description')
+      .toString()
+      .split('Description:')[1]
+      .trim()
+      .split(' ')[1]
+      .split('.')
+      .join('')
+      .slice(0, 4);
+  } catch (error) {
+    log.warn(`Could not determine host OS version: ${error}`);
+    return '';
+  }
+}
+
+function resolveTinyrangePath(isWin: boolean): string {
+  const isDev = process.env.NODE_ENV === 'development';
+  const binary = isWin ? 'tinyrange.exe' : 'tinyrange';
+  return (isDev
+    ? path.join(__dirname, '../../..', 'tinyrange', binary)
+    : path.join(process.resourcesPath, 'app', 'tinyrange', binary)
+  ).replace(/\\/g, '/');
+}
+
+/**
+ * Resolve the host-side inputs (settings, paths, OS probing), hand them to
+ * generateLaunchScript and write the result to a temp file.
+ */
 function createLaunchScript(
   serverInfo: JupyterServer.IInfo,
   engineType: EngineType,
@@ -498,53 +465,33 @@ function createLaunchScript(
   imageVersion?: string
 ): { scriptPath: string; containerName: string } {
   const isWin = process.platform === 'win32';
-  const isLinux = process.platform === 'linux';
-  const isDev = process.env.NODE_ENV === 'development';
-  log.debug('isDev', isDev);
-  const strPort = port.toString();
-
-  const tinyrangePath = isDev
-    ? path
-        .join(
-          __dirname,
-          '../../..',
-          'tinyrange',
-          isWin ? 'tinyrange.exe' : 'tinyrange'
-        )
-        .replace(/\\/g, '/')
-    : path
-        .join(
-          process.resourcesPath,
-          'app',
-          'tinyrange',
-          isWin ? 'tinyrange.exe' : 'tinyrange'
-        )
-        .replace(/\\/g, '/');
-
-  let osVersion = '';
-  if (os.platform() === 'linux') {
-    osVersion = execSync('lsb_release -a | grep Description')
-      .toString()
-      .split('Description:')[1]
-      .trim()
-      .split(' ')[1]
-      .split('.')
-      .join('')
-      .slice(0, 4);
-  }
-
-  const storageDir =
-    userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
-    (process.platform === 'win32'
-      ? 'C:/neurodesktop-storage'
-      : path.join(os.homedir(), 'neurodesktop-storage'));
-
   const isTinyRange = engineType === EngineType.TinyRange;
-  const isPodman = engineType === EngineType.Podman;
-  const isDocker = engineType === EngineType.Docker;
+
+  const baseContainerConfigPath = path.join(
+    __dirname,
+    'config/baseContainerConfig.yml'
+  );
+  const containerConfigPath = path.join(
+    __dirname,
+    '../container_installer',
+    containerConfigName + '.yml'
+  );
+  log.debug(
+    `baseContainerConfigPath: ${baseContainerConfigPath}, containerConfigName: ${containerConfigPath}`
+  );
+
+  const parser = new ContainerConfigParser(
+    baseContainerConfigPath,
+    containerConfigPath,
+    imageVersion
+  );
+
+  const storageDirectory =
+    userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
+    getDefaultStorageDirectory();
 
   if (isTinyRange) {
-    const buildDir = path.join(storageDir, 'build');
+    const buildDir = path.join(storageDirectory, 'build');
     if (fs.existsSync(buildDir)) {
       fs.rmSync(path.join(buildDir, 'persist'), {
         recursive: true,
@@ -554,298 +501,60 @@ function createLaunchScript(
     }
   }
 
-  {
-    const platform = isWin ? 'windows' : 'unix';
-    const baseContainerConfigPath = path.join(
-      __dirname,
-      'config/baseContainerConfig.yml'
-    );
-    const containerConfigPath = path.join(
-      __dirname,
-      '../container_installer',
-      containerConfigName + '.yml'
-    );
-    log.debug(
-      `baseContainerConfigPath: ${baseContainerConfigPath}, containerConfigName: ${containerConfigPath}`
-    );
-
-    const parser = new ContainerConfigParser(
-      baseContainerConfigPath,
-      containerConfigPath
-    );
-    const version = imageVersion || parser.getImageVersion();
-    const imageRegistry = parser.getImageRegistry() + ':' + version;
-    const volumeMount = parser.getVolumeMount();
-
-    // Get container name from config and resolve (cleanup existing)
-    const containerName = resolveContainerName(
-      engineType,
-      parser.getContainerName()
-    );
-
-    log.info(
-      `Server launch: port=${port} engine=${engineType} container=${containerName}`
-    );
-
-    // NFS detection for working directory
-    const resolvedWorkDir = serverInfo.workingDirectory
-      ? resolveWorkingDirectory(serverInfo.workingDirectory)
-      : '';
-    const workingDirectoryFsType = resolvedWorkDir
-      ? getLinuxFileSystemType(resolvedWorkDir)
-      : '';
-    const isNfsWorkingDirectory =
-      process.platform === 'linux' &&
-      ['nfs', 'nfs4'].includes(workingDirectoryFsType);
-
-    log.info(
-      `Working directory diagnostics: raw="${serverInfo.workingDirectory}" resolved="${resolvedWorkDir}" fsType="${workingDirectoryFsType}" isNfs=${isNfsWorkingDirectory}`
-    );
-
-    const neurodesktopStorageDir = isWin
-      ? 'C://neurodesktop-storage'
-      : '~/neurodesktop-storage';
-    const buildDir = path.join(neurodesktopStorageDir, 'build');
-
-    let additionalDir = '';
-    const cvmfsDisable = serverInfo.cvmfsMode.toString();
-
-    // For Docker/Podman the Jupyter port inside the container is always 8888;
-    // for TinyRange the forwarded port is used directly.
-    const serverPort = isTinyRange ? strPort : '8888';
-
-    const context: VariableContext = {
-      port: strPort,
-      serverPort,
-      token,
-      cvmfsDisable,
-      tinyrangePath,
-      buildDir,
-      storageDir: neurodesktopStorageDir,
-      additionalDir,
-      volumeMount
-    };
-    log.debug(`context: ${JSON.stringify(context)}`);
-
-    let launchArgs = parser.parseArgs(engineType, context, platform);
-
-    // Use apparmor profile for ubuntu>=23.10
-    if (parseInt(osVersion) >= 2310 && isDocker) {
-      launchArgs.push('--security-opt apparmor=neurodeskapp');
+  // The "additional working directory" setting is the only host directory
+  // mounted into the container (at /data).
+  let additionalDirectory = '';
+  if (serverInfo.serverArgs) {
+    additionalDirectory = resolveWorkingDirectory(serverInfo.serverArgs);
+    if (process.platform === 'linux') {
+      fs.chmodSync(additionalDirectory, 0o777);
     }
-
-    // Add additional directory configuration if specified
-    if (serverInfo.serverArgs) {
-      additionalDir = resolveWorkingDirectory(serverInfo.serverArgs);
-      if (process.platform === 'linux') {
-        fs.chmodSync(additionalDir, 0o777);
-      }
-      const additionalDirConfig = parser.getAdditionalDirConfig(
-        engineType,
-        serverInfo.serverArgs,
-        platform
-      );
-      if (additionalDirConfig) {
-        launchArgs.push(additionalDirConfig);
-      }
-    }
-
-    // For TinyRange, add the -E prelude (env vars + fuse/permission setup)
-    if (isTinyRange) {
-      const prelude = parser.getTinyrangePrelude(context, platform);
-      if (prelude) {
-        launchArgs.push(prelude);
-      }
-    }
-
-    // Get default server args
-    const serverArgs = parser.getDefaultServerArgs(context);
-    if (serverArgs.length > 0) {
-      serverArgs.forEach(arg => {
-        launchArgs.push(arg);
-      });
-      if (isTinyRange) {
-        const postArgs = parser.getTinyrangePostArgs();
-        if (postArgs) {
-          launchArgs.push(postArgs);
-        }
-      } else {
-        launchArgs.push("''");
-      }
-    }
-
-    let launchCmd = launchArgs.join(' ');
-
-    let volumeCheck = `${
-      isWin
-        ? `${engineType} volume inspect ${volumeMount} >NUL 2>&1 || ${engineType} volume create ${volumeMount}`
-        : `${engineType} volume exists ${volumeMount} &> /dev/null || ${engineType} volume create ${volumeMount}`
-    }`;
-    let volumeCreate = `${isPodman ? `${volumeCheck}` : ''}`;
-
-    // Fix ownership of /home/jovyan on the persistent volume before launching.
-    let fixPermissionsCmd = isTinyRange
-      ? ''
-      : isWin
-      ? `${engineType} run --rm --entrypoint chown -v ${volumeMount}:/home/jovyan ${imageRegistry} -R 1000:100 /home/jovyan >NUL 2>NUL`
-      : `${engineType} run --rm --entrypoint chown -v ${volumeMount}:/home/jovyan ${imageRegistry} -R "$(id -u):100" /home/jovyan 2>/dev/null || true`;
-
-    let removeCmd = `${
-      isWin
-        ? `${engineType} container exists ${containerName} >NUL 2>&1 && ${engineType} rm -f ${containerName} >NUL 2>&1`
-        : `${engineType} container exists ${containerName} &> /dev/null && ${
-            isLinux ? 'timeout 30 ' : ''
-          }${engineType} rm -f ${containerName} &> /dev/null`
-    }`;
-    let stopCmd = `${
-      isPodman
-        ? `${removeCmd}`
-        : isTinyRange
-        ? ``
-        : isWin
-        ? `${engineType} rm -f ${containerName} >NUL 2>&1`
-        : `${
-            isLinux ? 'timeout 30 ' : ''
-          }${engineType} rm -f ${containerName} &> /dev/null`
-    }`;
-
-    let script: string;
-
-    const hostGatewayResolveWin = isTinyRange
-      ? ''
-      : `
-        SET HOST_GATEWAY_IP=host-gateway
-        ${
-          isPodman
-            ? `REM Windows: Podman runs in a VM, host-gateway does not reliably resolve to the Windows host
-        REM Use PowerShell Get-NetRoute (locale-independent) to find the IPv4 default gateway
-        FOR /F "delims=" %%i IN ('powershell -NoProfile -Command "try{(Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop)[0].NextHop}catch{}"') DO SET HOST_GATEWAY_IP=%%i`
-            : ''
-        }`;
-
-    const hostGatewayResolveUnix = isTinyRange
-      ? ''
-      : `
-        HOST_GATEWAY_IP="host-gateway"
-        ${
-          isPodman
-            ? isLinux
-              ? `PODMAN_VER=$(${engineType} --version 2>/dev/null | awk '{print $3}')
-        PODMAN_MAJOR=$(echo "$PODMAN_VER" | cut -d. -f1)
-        PODMAN_MINOR=$(echo "$PODMAN_VER" | cut -d. -f2)
-        if [ "$PODMAN_MAJOR" -lt 4 ] 2>/dev/null || { [ "$PODMAN_MAJOR" -eq 4 ] && [ "$PODMAN_MINOR" -lt 1 ]; } 2>/dev/null; then
-          HOST_GATEWAY_IP=$(ip route | grep default | awk '{print $3}' | head -1)
-          echo "[neurodesk-app] Podman $PODMAN_VER does not support host-gateway, using resolved IP: $HOST_GATEWAY_IP"
-        fi`
-              : `# macOS: Podman runs in a VM, host-gateway does not reliably resolve to the macOS host
-        HOST_GATEWAY_IP=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
-        [ -z "$HOST_GATEWAY_IP" ] && HOST_GATEWAY_IP="host-gateway"
-        echo "[neurodesk-app] macOS Podman: using resolved gateway IP: $HOST_GATEWAY_IP"`
-            : ''
-        }`;
-
-    if (isWin) {
-      if (isTinyRange) {
-        script = `
-        setlocal enabledelayedexpansion
-        ${launchCmd}
-      `;
-      } else {
-        script = `
-        setlocal enabledelayedexpansion
-        SET ERRORCODE=0
-        SET IMAGE_EXISTS=
-        ${hostGatewayResolveWin}
-        where ${engineType} >nul 2>nul
-          if %ERRORLEVEL% neq 0 (
-              echo "${engineType} command not found, running ${launchCmd}"
-              ${launchCmd}
-          )
-        FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${imageRegistry} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
-        ${fixPermissionsCmd}
-        if "%IMAGE_EXISTS%"=="exists" (
-            echo "Image exists. Starting container..."
-            FOR /F "usebackq delims=" %%i IN (\`${engineType} container inspect -f "{{.State.Status}}" ${containerName}\`) DO SET CONTAINER_STATUS=%%i
-              ${stopCmd}
-              ${volumeCreate}
-              ${launchCmd}
-        ) else (
-            echo "Image does not exist. Start downloading..."
-            ${stopCmd}
-            ${volumeCreate}
-            ${engineType} pull docker.io/${imageRegistry}
-            ${launchCmd}
-        )
-        ${engineType} logs -f ${containerName}
-      `;
-      }
-    } else {
-      if (isTinyRange) {
-        script = `
-        umask 000
-        ${launchCmd}
-        `;
-      } else {
-        script = `
-        ${hostGatewayResolveUnix}
-        echo $HOST_GATEWAY_IP
-        echo "[neurodesk-app] Launch script started at $(date -Iseconds)"
-        echo "[neurodesk-app] Engine: ${engineType}"
-        echo "[neurodesk-app] Working directory: ${additionalDir || 'none'}"
-        echo "[neurodesk-app] Container name: ${containerName}"
-        echo "[neurodesk-app] Port: ${strPort}"
-        if [[ "$(${engineType} image inspect ${imageRegistry} --format='exists' 2> /dev/null)" == "exists" ]]; then
-          ${stopCmd}
-          ${volumeCreate}
-          ${fixPermissionsCmd}
-          CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
-          LAUNCH_EXIT=$?
-        else
-          ${stopCmd}
-          ${volumeCreate}
-          ${
-            isLinux ? 'timeout 300 ' : ''
-          }${engineType} pull docker.io/${imageRegistry}
-          ${fixPermissionsCmd}
-          CONTAINER_ID=$(${isLinux ? 'timeout 300 ' : ''}${launchCmd})
-          LAUNCH_EXIT=$?
-        fi
-        ${
-          isLinux
-            ? `
-        if [ $LAUNCH_EXIT -eq 124 ]; then
-          echo "[neurodesk-app] ERROR: ${engineType} run timed out after 300s — Docker daemon may be stuck on NFS mount operations" >&2
-          echo "[neurodesk-app] ERROR: If this persists, try: sudo systemctl restart docker" >&2
-          exit 124
-        fi`
-            : ''
-        }
-
-        if [ $LAUNCH_EXIT -ne 0 ]; then
-          echo "[neurodesk-app] ERROR: ${engineType} run exited with code $LAUNCH_EXIT" >&2
-          echo "[neurodesk-app] ERROR: Checking container status:" >&2
-          ${engineType} ps -a --filter name=${containerName} --format '{{.ID}} {{.Status}} {{.Names}}' 2>&1 >&2
-          ${engineType} logs ${containerName} 2>&1 || true
-          exit $LAUNCH_EXIT
-        else
-          echo "[neurodesk-app] Container started: $CONTAINER_ID"
-          ${engineType} logs -f ${containerName} 2>&1
-        fi
-        `;
-      }
-    }
-
-    const ext = isWin ? 'bat' : 'sh';
-    const scriptPath = createTempFile(`launch.${ext}`, script);
-
-    log.info(`Server launch script:\n${script}`);
-
-    if (!isWin) {
-      fs.chmodSync(scriptPath, 0o755);
-    }
-
-    return { scriptPath, containerName };
   }
+
+  const additionalDirFsType = additionalDirectory
+    ? getLinuxFileSystemType(additionalDirectory)
+    : '';
+  const isNfsAdditionalDirectory =
+    process.platform === 'linux' &&
+    ['nfs', 'nfs4'].includes(additionalDirFsType);
+
+  const containerName = resolveContainerName(
+    engineType,
+    parser.getContainerName()
+  );
+
+  log.info(
+    `Server launch: port=${port} engine=${engineType} container=${containerName} image=${parser.getImageName()}`
+  );
+  log.info(
+    `Additional directory diagnostics: raw="${serverInfo.serverArgs}" resolved="${additionalDirectory}" fsType="${additionalDirFsType}" isNfs=${isNfsAdditionalDirectory}`
+  );
+
+  const script = generateLaunchScript({
+    parser,
+    engineType,
+    platform: process.platform,
+    port,
+    token,
+    cvmfsMode: serverInfo.cvmfsMode.toString(),
+    osVersion: getHostOsVersion(),
+    tinyrangePath: resolveTinyrangePath(isWin),
+    storageDirectory,
+    additionalDirectory,
+    isNfsAdditionalDirectory,
+    overrideDefaultServerArgs: serverInfo.overrideDefaultServerArgs
+  });
+
+  const ext = isWin ? 'bat' : 'sh';
+  const scriptPath = createTempFile(`launch.${ext}`, script);
+
+  log.info(`Server launch script:\n${script}`);
+
+  if (!isWin) {
+    fs.chmodSync(scriptPath, 0o755);
+  }
+
+  return { scriptPath, containerName };
 }
 
 async function checkIfUrlExists(url: URL): Promise<boolean> {

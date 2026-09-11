@@ -17,12 +17,24 @@ export interface VariableContext {
   volumeMount?: string;
 }
 
+/**
+ * A run flag that only applies when a host condition holds.
+ */
+// eslint-disable-next-line @typescript-eslint/naming-convention
+export interface ConditionalRunArg {
+  arg: string;
+  engines?: string[];
+  platforms?: PlatformType[];
+  minOsVersion?: number;
+}
+
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export interface BaseContainerConfig {
   commonLaunchArgs: string[];
   engines: {
     [key: string]: {
       base_cmd: string;
+      trailingImage?: boolean;
       volume_mount?: string;
       args?: string[];
     };
@@ -41,11 +53,16 @@ export interface BaseContainerConfig {
       };
     };
   };
+  conditionalRunArgs?: ConditionalRunArg[];
   tinyrangePrelude?: {
+    [platform: string]: string;
+  };
+  tinyrangeAdditionalDirPrelude?: {
     [platform: string]: string;
   };
   defaultServerArgs?: string[];
   tinyrangePostArgs?: string;
+  containerPort?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -61,15 +78,37 @@ export interface ContainerConfig {
   tags?: string[];
 }
 
+/**
+ * Options for {@link ContainerConfigParser.buildLaunchArgs}.
+ */
+// eslint-disable-next-line @typescript-eslint/naming-convention
+export interface BuildLaunchArgsOptions {
+  platform?: PlatformType;
+  /** Host OS version (Ubuntu YYMM), used to evaluate conditionalRunArgs. */
+  osVersion?: string;
+  /** Host directory to mount at /data, already resolved. */
+  additionalDir?: string;
+  /** Append the default server args. False when the user overrides them. */
+  includeServerArgs?: boolean;
+}
+
+const DEFAULT_CONTAINER_PORT = '8888';
+
 export class ContainerConfigParser {
   private baseContainerConfig: BaseContainerConfig;
   private containerConfig: ContainerConfig;
+  private version: string;
 
-  constructor(baseContainerConfigPath?: string, containerConfigName?: string) {
+  constructor(
+    baseContainerConfigPath?: string,
+    containerConfigName?: string,
+    version?: string
+  ) {
     this.baseContainerConfig = this.loadBaseContainerConfig(
       baseContainerConfigPath
     );
     this.containerConfig = this.loadContainerConfig(containerConfigName);
+    this.version = version || this.containerConfig.defaultVersion;
   }
 
   private loadBaseContainerConfig(configPath?: string): BaseContainerConfig {
@@ -118,16 +157,16 @@ export class ContainerConfigParser {
     // Replace all placeholders with actual values
     const substitutions: { [key: string]: string } = {
       '{port}': context.port,
+      '{containerPort}': this.getContainerPort(),
       '{serverPort}': context.serverPort,
       '{token}': context.token,
-      '{tag}': this.containerConfig.defaultVersion,
+      '{tag}': this.version,
       '{cvmfsDisable}': context.cvmfsDisable,
       '{tinyrangePath}': context.tinyrangePath,
       '{buildDir}': context.buildDir || '',
       '{storageDir}': context.storageDir || '',
       '{additionalDir}': context.additionalDir || '',
-      '{imageRegistry}':
-        this.containerConfig.registry + ':' + this.containerConfig.defaultVersion,
+      '{imageRegistry}': this.getImageName(),
       '{volume_mount}': context.volumeMount || '',
       '{containerName}': this.containerConfig.containerName || ''
     };
@@ -187,7 +226,11 @@ export class ContainerConfigParser {
   }
 
   /**
-   * Parse launch arguments for a specific engine and platform
+   * Parse the run flags for a specific engine and platform.
+   *
+   * The result never contains the image reference — Docker and Podman treat
+   * everything after it as the container command, so it is appended last by
+   * {@link buildLaunchArgs}. Prefer buildLaunchArgs over calling this directly.
    */
   public parseArgs(
     engine: EngineType,
@@ -255,12 +298,111 @@ export class ContainerConfigParser {
       args.push(volumeArg);
     }
 
-    // Add image registry
+    return args;
+  }
+
+  /**
+   * Assemble the complete launch argument list for an engine.
+   *
+   * This is the only supported way to build a launch command. It owns the
+   * ordering the engines require: every run flag (including the conditional
+   * ones and the /data mount) first, then the image reference, then the
+   * container command.
+   */
+  public buildLaunchArgs(
+    engine: EngineType,
+    context: VariableContext,
+    options: BuildLaunchArgsOptions = {}
+  ): string[] {
+    const platformType = options.platform || this.getPlatform();
+    const isTinyRange = engine === EngineType.TinyRange;
+    const includeServerArgs = options.includeServerArgs !== false;
+
+    const args = this.parseArgs(engine, context, platformType);
+
     args.push(
-      this.containerConfig.registry + ':' + this.containerConfig.defaultVersion
+      ...this.getConditionalRunArgs(engine, platformType, options.osVersion)
     );
 
+    if (options.additionalDir) {
+      const additionalDirConfig = this.getAdditionalDirConfig(
+        engine,
+        options.additionalDir,
+        platformType
+      );
+      if (additionalDirConfig) {
+        args.push(additionalDirConfig);
+      }
+    }
+
+    // Docker and Podman take the image as a positional argument after the run
+    // flags; TinyRange has already passed it inline as --oci.
+    if (this.usesTrailingImage(engine)) {
+      args.push(this.getImageName());
+    }
+
+    if (includeServerArgs) {
+      // The TinyRange prelude opens the -E quote that tinyrangePostArgs
+      // closes, so it only makes sense alongside the server args.
+      if (isTinyRange) {
+        const prelude = this.getTinyrangePrelude(
+          context,
+          platformType,
+          options.additionalDir
+        );
+        if (prelude) {
+          args.push(prelude);
+        }
+      }
+
+      args.push(...this.getDefaultServerArgs(context));
+
+      if (isTinyRange) {
+        const postArgs = this.getTinyrangePostArgs();
+        if (postArgs) {
+          args.push(postArgs);
+        }
+      }
+    }
+
     return args;
+  }
+
+  /**
+   * Whether the engine expects the image reference after its run flags.
+   */
+  public usesTrailingImage(engine: EngineType): boolean {
+    return this.baseContainerConfig.engines[engine]?.trailingImage === true;
+  }
+
+  /**
+   * Run flags whose host condition holds for this engine/platform/OS version.
+   */
+  public getConditionalRunArgs(
+    engine: EngineType,
+    platform?: PlatformType,
+    osVersion?: string
+  ): string[] {
+    const platformType = platform || this.getPlatform();
+    const parsedOsVersion = parseInt(osVersion, 10);
+
+    return (this.baseContainerConfig.conditionalRunArgs || [])
+      .filter(entry => {
+        if (entry.engines && !entry.engines.includes(engine)) {
+          return false;
+        }
+        if (entry.platforms && !entry.platforms.includes(platformType)) {
+          return false;
+        }
+        if (entry.minOsVersion !== undefined) {
+          // An unknown host OS version never satisfies a version floor.
+          if (isNaN(parsedOsVersion) || parsedOsVersion < entry.minOsVersion) {
+            return false;
+          }
+        }
+        return true;
+      })
+      .map(entry => entry.arg);
   }
 
   /**
@@ -312,10 +454,33 @@ export class ContainerConfigParser {
   }
 
   /**
-   * Get the image version from config
+   * Get the image version in use — the override when one was supplied,
+   * otherwise the config's defaultVersion.
    */
   public getImageVersion(): string {
+    return this.version;
+  }
+
+  /**
+   * Override the image version (e.g. a version picked in the UI). Applies to
+   * every subsequent substitution of {tag} and {imageRegistry}.
+   */
+  public setImageVersion(version?: string): void {
+    this.version = version || this.containerConfig.defaultVersion;
+  }
+
+  /**
+   * Get the version declared in the config, ignoring any override.
+   */
+  public getDefaultImageVersion(): string {
     return this.containerConfig.defaultVersion;
+  }
+
+  /**
+   * Fully qualified image reference (registry:version).
+   */
+  public getImageName(): string {
+    return `${this.containerConfig.registry}:${this.version}`;
   }
 
   /**
@@ -326,20 +491,32 @@ export class ContainerConfigParser {
   }
 
   /**
-   * Get TinyRange -E prelude for a given platform
+   * Port JupyterLab listens on inside the container.
+   */
+  public getContainerPort(): string {
+    return this.baseContainerConfig.containerPort || DEFAULT_CONTAINER_PORT;
+  }
+
+  /**
+   * Get TinyRange -E prelude for a given platform. When an additional
+   * directory is mounted, the /data ownership fixup is appended to it.
    */
   public getTinyrangePrelude(
     context: VariableContext,
-    platform?: PlatformType
+    platform?: PlatformType,
+    additionalDir?: string
   ): string | null {
     const platformType = platform || this.getPlatform();
     if (!this.baseContainerConfig.tinyrangePrelude?.[platformType]) {
       return null;
     }
-    return this.substituteVariables(
-      this.baseContainerConfig.tinyrangePrelude[platformType],
-      context
-    );
+    let prelude = this.baseContainerConfig.tinyrangePrelude[platformType];
+    const additionalDirPrelude = this.baseContainerConfig
+      .tinyrangeAdditionalDirPrelude?.[platformType];
+    if (additionalDir && additionalDirPrelude) {
+      prelude += additionalDirPrelude;
+    }
+    return this.substituteVariables(prelude, context);
   }
 
   /**

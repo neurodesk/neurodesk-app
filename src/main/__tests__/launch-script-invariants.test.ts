@@ -1,7 +1,8 @@
-import { generateLaunchScript, ILaunchScriptParams } from '../server';
 import { execFileSync } from 'child_process';
+import { ContainerConfigParser } from '../config/containerConfigParser';
 import { EngineType } from '../config/settings';
 import * as fs from 'fs';
+import { generateLaunchScript, ILaunchScriptParams } from '../server';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -11,39 +12,60 @@ import * as path from 'path';
  * These tests do not assert on specific flags — launch-script.test.ts does
  * that. They assert on properties that must hold no matter which flags a
  * future fix adds, so that a change made for one engine/platform cannot
- * silently break another. The two failure modes they guard against:
+ * silently break another. They run against the real baseContainerConfig.yml,
+ * so a bad edit to the config fails here too. The failure modes they guard:
  *
  *   1. A flag added in the wrong position (e.g. after the image name, where
  *      docker treats it as a container argument rather than a run flag).
- *   2. A string edit that breaks shell/batch syntax — today the only thing
+ *   2. A template left unresolved by ContainerConfigParser.
+ *   3. A string edit that breaks shell/batch syntax — today the only thing
  *      that catches that is a full container launch in e2e.
  */
 
 const TAG = '2024-01-01';
 
-function baseParams(
-  overrides: Partial<ILaunchScriptParams> = {}
-): ILaunchScriptParams {
+const baseConfigPath = path.join(
+  __dirname,
+  '../config/baseContainerConfig.yml'
+);
+const containerConfigPath = path.join(
+  __dirname,
+  '../../../container_installer/neuroimaging.yml'
+);
+
+interface ITestOverrides extends Partial<Omit<ILaunchScriptParams, 'parser'>> {
+  tag?: string;
+}
+
+function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
+  const { tag = TAG, ...rest } = overrides;
+  const platform = rest.platform || 'linux';
   return {
+    parser: new ContainerConfigParser(baseConfigPath, containerConfigPath, tag),
     engineType: EngineType.Docker,
     port: 8888,
     token: 'jlab:srvr:abc123',
-    tag: TAG,
-    platform: 'linux',
-    workingDirectory: '',
+    platform,
     cvmfsMode: 'false',
-    overrideDefaultServerArgs: false,
-    tinyrangePath: '/usr/local/bin/tinyrange',
     osVersion: '2404',
-    containerName: 'neurodeskapp',
-    ...overrides
+    tinyrangePath: '/usr/local/bin/tinyrange',
+    storageDirectory:
+      platform === 'win32'
+        ? 'C:\\neurodesktop-storage'
+        : '/home/tester/neurodesktop-storage',
+    additionalDirectory: '',
+    isNfsAdditionalDirectory: false,
+    overrideDefaultServerArgs: false,
+    ...rest
   };
 }
+
+const IMAGE = `docker.io/vnmd/neurodesktop:${TAG}`;
 
 const PLATFORMS = ['linux', 'darwin', 'win32'];
 const ENGINES = [EngineType.Docker, EngineType.Podman, EngineType.TinyRange];
 
-/** Every (platform, engine) pair, in both "no working dir" and "working dir" shapes. */
+/** Every (platform, engine) pair, with and without a /data mount. */
 const MATRIX: Array<[string, EngineType, string]> = [];
 for (const platform of PLATFORMS) {
   for (const engineType of ENGINES) {
@@ -94,12 +116,16 @@ describe('launch script invariants', () => {
 
     it.each(cases)('%s / %s', (platform, engineType) => {
       const script = generateLaunchScript(
-        baseParams({ platform, engineType, workingDirectory: '/tmp' })
+        baseParams({
+          platform,
+          engineType,
+          additionalDirectory: '/tmp',
+          // High enough to pull in the conditional apparmor flag, which used
+          // to be appended after the image name.
+          osVersion: '2404'
+        })
       );
-      const image =
-        engineType === EngineType.Podman
-          ? `docker.io/vnmd/neurodesktop:${TAG}`
-          : `vnmd/neurodesktop:${TAG}`;
+      const image = IMAGE;
 
       const runLines = script
         .split('\n')
@@ -121,13 +147,17 @@ describe('launch script invariants', () => {
 
   describe('no unresolved templates or undefined values', () => {
     it.each(MATRIX)(
-      '%s / %s / workingDirectory=%s',
-      (platform, engineType, workingDirectory) => {
+      '%s / %s / additionalDirectory=%s',
+      (platform, engineType, additionalDirectory) => {
         const script = generateLaunchScript(
-          baseParams({ platform, engineType, workingDirectory })
+          baseParams({ platform, engineType, additionalDirectory })
         );
-        expect(script).not.toContain('{token}');
-        expect(script).not.toContain('{port}');
+        // Any {template} the parser failed to substitute. Legitimate braces
+        // that must not trip this: Go's {{.Field}} format strings (stripped
+        // first), shell ${VAR} expansions (excluded by the lookbehind) and
+        // `find -exec {} +` (excluded by requiring a word character).
+        const templates = script.replace(/\{\{[^}]*\}\}/g, '');
+        expect(templates).not.toMatch(/(?<!\$)\{\w[\w.]*\}/);
         expect(script).not.toContain('undefined');
         expect(script).not.toContain('NaN');
         expect(script).not.toContain('[object Object]');
@@ -135,20 +165,22 @@ describe('launch script invariants', () => {
     );
 
     it('does not emit undefined when optional params are omitted', () => {
-      // containerName, storageDirectory and isNfsWorkingDirectory are optional
-      // on ILaunchScriptParams — each must have a working default.
+      // storageDirectory, additionalDirectory, isNfsAdditionalDirectory and
+      // overrideDefaultServerArgs are optional — each must have a default.
       for (const engineType of ENGINES) {
         const script = generateLaunchScript({
+          parser: new ContainerConfigParser(
+            baseConfigPath,
+            containerConfigPath,
+            TAG
+          ),
           engineType,
           port: 8888,
           token: 'jlab:srvr:abc123',
-          tag: TAG,
           platform: 'linux',
-          workingDirectory: '',
           cvmfsMode: 'false',
-          overrideDefaultServerArgs: false,
-          tinyrangePath: '/usr/local/bin/tinyrange',
-          osVersion: '2404'
+          osVersion: '2404',
+          tinyrangePath: '/usr/local/bin/tinyrange'
         });
         expect(script).not.toContain('undefined');
         // TinyRange has no --name flag; only Docker/Podman name the container.
@@ -156,6 +188,31 @@ describe('launch script invariants', () => {
           expect(script).toContain('--name neurodeskapp');
         }
       }
+    });
+
+    it('names the container consistently across --name and the lifecycle commands', () => {
+      // --name comes from the config, the rm/logs commands from the same
+      // parser — they must never drift apart.
+      for (const engineType of [EngineType.Docker, EngineType.Podman]) {
+        const script = generateLaunchScript(baseParams({ engineType }));
+        expect(script).toContain('--name neurodeskapp');
+        expect(script).toContain(`${engineType} logs -f neurodeskapp`);
+      }
+    });
+
+    it('pulls and inspects the version the container actually runs', () => {
+      // The image version can be overridden in the UI; every reference to it
+      // in the script must come from the same source.
+      const script = generateLaunchScript(baseParams({ tag: '2025-03-09' }));
+      expect(script).toContain('docker.io/vnmd/neurodesktop:2025-03-09');
+      expect(script).toContain('-e NEURODESKTOP_VERSION=2025-03-09');
+      expect(script).not.toContain(`neurodesktop:${TAG}`);
+    });
+
+    it('does not double up the registry host in the pull command', () => {
+      const script = generateLaunchScript(baseParams());
+      expect(script).toContain(`docker pull ${IMAGE}`);
+      expect(script).not.toContain('docker.io/docker.io/');
     });
 
     it('propagates token and port into the server args for every engine', () => {
@@ -264,14 +321,14 @@ describe('launch script invariants', () => {
     });
 
     it.each(unixMatrix)(
-      '%s / %s / workingDirectory=%s parses',
-      (platform, engineType, workingDirectory) => {
+      '%s / %s / additionalDirectory=%s parses',
+      (platform, engineType, additionalDirectory) => {
         const script = generateLaunchScript(
-          baseParams({ platform, engineType, workingDirectory })
+          baseParams({ platform, engineType, additionalDirectory })
         );
         const file = path.join(
           tmpDir,
-          `${platform}-${engineType}-${workingDirectory ? 'wd' : 'nowd'}.sh`
+          `${platform}-${engineType}-${additionalDirectory ? 'wd' : 'nowd'}.sh`
         );
         fs.writeFileSync(file, script);
         expect(() => execFileSync('bash', ['-n', file])).not.toThrow();
@@ -280,7 +337,10 @@ describe('launch script invariants', () => {
 
     it('parses with NFS pre-check and overridden server args', () => {
       for (const variant of [
-        { isNfsWorkingDirectory: true, workingDirectory: '/mnt/nfs-share' },
+        {
+          isNfsAdditionalDirectory: true,
+          additionalDirectory: '/mnt/nfs-share'
+        },
         { overrideDefaultServerArgs: true },
         { cvmfsMode: 'true' },
         { osVersion: '2204' }
@@ -297,10 +357,10 @@ describe('launch script invariants', () => {
     const winMatrix = MATRIX.filter(([platform]) => platform === 'win32');
 
     it.each(winMatrix)(
-      '%s / %s / workingDirectory=%s contains no bash-isms',
-      (platform, engineType, workingDirectory) => {
+      '%s / %s / additionalDirectory=%s contains no bash-isms',
+      (platform, engineType, additionalDirectory) => {
         const script = generateLaunchScript(
-          baseParams({ platform, engineType, workingDirectory })
+          baseParams({ platform, engineType, additionalDirectory })
         );
         // cmd.exe has no command substitution, no `&>` redirect and no `[[`.
         expect(script).not.toContain('$(');
@@ -310,10 +370,10 @@ describe('launch script invariants', () => {
     );
 
     it.each(winMatrix)(
-      '%s / %s / workingDirectory=%s enables delayed expansion when it uses !VAR!',
-      (platform, engineType, workingDirectory) => {
+      '%s / %s / additionalDirectory=%s enables delayed expansion when it uses !VAR!',
+      (platform, engineType, additionalDirectory) => {
         const script = generateLaunchScript(
-          baseParams({ platform, engineType, workingDirectory })
+          baseParams({ platform, engineType, additionalDirectory })
         );
         if (/![A-Z_]+!/.test(script)) {
           // `!VAR!` expands to the literal text without this.

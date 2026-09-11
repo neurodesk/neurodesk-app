@@ -77,24 +77,9 @@ export enum SettingType {
   telemetryConsent = 'telemetryConsent'
 }
 
-// export const serverLaunchArgsFixed = [
-//   '-e NEURODESKTOP_VERSION={tag} vnmd/neurodesktop:{tag}'
-//   // // use our token rather than any pre-configured password
-// ];
-
-export const serverLaunchArgsDefault = [
-  //   // do not use any config file
-  //   '--JupyterApp.config_file_name=""',
-  //   // enable hidden files (let user decide whether to display them)
-  //   '--ContentsManager.allow_hidden=True'
-  "start.sh jupyter lab --ServerApp.password=''",
-  '--no-browser',
-  '--expose-app-in-browser',
-  `--ServerApp.token='{token}'`,
-  `--ServerApp.port={port}`,
-  '--LabApp.quit_button=False',
-  '--NotebookIntelligence.github_access_token=remember'
-];
+// The default server launch args live in
+// src/main/config/baseContainerConfig.yml (defaultServerArgs) and are read
+// through ContainerConfigParser.getDefaultServerArgs().
 
 export class Setting<T> {
   constructor(defaultValue: T, options?: Setting.IOptions) {

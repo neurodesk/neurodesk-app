@@ -1,22 +1,50 @@
-import { generateLaunchScript, ILaunchScriptParams } from '../server';
+import * as path from 'path';
+import { ContainerConfigParser } from '../config/containerConfigParser';
 import { EngineType } from '../config/settings';
+import {
+  generateLaunchScript,
+  getDefaultStorageDirectory,
+  ILaunchScriptParams
+} from '../server';
 
-function baseParams(
-  overrides: Partial<ILaunchScriptParams> = {}
-): ILaunchScriptParams {
+const baseConfigPath = path.join(
+  __dirname,
+  '../config/baseContainerConfig.yml'
+);
+const containerConfigPath = path.join(
+  __dirname,
+  '../../../container_installer/neuroimaging.yml'
+);
+
+/**
+ * `tag` is not a launch-script param any more — it is the image version the
+ * parser was built with. The helper keeps it as an override so each test can
+ * still pin one.
+ */
+interface ITestOverrides extends Partial<Omit<ILaunchScriptParams, 'parser'>> {
+  tag?: string;
+}
+
+function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
+  const { tag = '2024-01-01', ...rest } = overrides;
+  const platform = rest.platform || 'linux';
   return {
+    parser: new ContainerConfigParser(baseConfigPath, containerConfigPath, tag),
     engineType: EngineType.Docker,
     port: 8888,
     token: 'jlab:srvr:abc123',
-    tag: '2024-01-01',
-    platform: 'linux',
-    workingDirectory: '',
+    platform,
     cvmfsMode: 'false',
-    overrideDefaultServerArgs: false,
-    tinyrangePath: '/usr/local/bin/tinyrange',
     osVersion: '2204',
-    containerName: 'neurodeskapp',
-    ...overrides
+    tinyrangePath: '/usr/local/bin/tinyrange',
+    storageDirectory:
+      platform === 'win32'
+        ? 'C:\\neurodesktop-storage'
+        : '~/neurodesktop-storage',
+    additionalDirectory: '',
+    isNfsAdditionalDirectory: false,
+    overrideDefaultServerArgs: false,
+    ...rest
   };
 }
 
@@ -324,7 +352,7 @@ describe('generateLaunchScript', () => {
     it('adds /data volume mount when workingDirectory is set (Docker)', () => {
       const script = generateLaunchScript(
         baseParams({
-          workingDirectory: '/tmp'
+          additionalDirectory: '/tmp'
         })
       );
       // resolveWorkingDirectory may resolve the path; just check :/data mount is present
@@ -336,26 +364,29 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.TinyRange,
-          workingDirectory: '/tmp'
+          additionalDirectory: '/tmp'
         })
       );
       expect(script).toContain(':/data');
       expect(script).toContain('--mount-rw');
     });
 
-    it('does not mount /data when working directory is invalid', () => {
+    it('mounts exactly the directory it is given', () => {
+      // generateLaunchScript is pure: existence checking and resolution are
+      // the caller's job (createLaunchScript runs resolveWorkingDirectory),
+      // so whatever arrives here is mounted verbatim.
       const script = generateLaunchScript(
         baseParams({
-          workingDirectory: '/nonexistent/path/abc123'
+          additionalDirectory: '/mnt/scratch/project one'
         })
       );
-      expect(script).not.toContain(':/data');
+      expect(script).toContain('--volume "/mnt/scratch/project one":/data');
     });
 
     it('does not add /data mount when workingDirectory is empty', () => {
       const script = generateLaunchScript(
         baseParams({
-          workingDirectory: ''
+          additionalDirectory: ''
         })
       );
       expect(script).not.toContain(':/data');
@@ -366,7 +397,7 @@ describe('generateLaunchScript', () => {
         baseParams({
           engineType: EngineType.TinyRange,
           platform: 'win32',
-          workingDirectory: '/tmp'
+          additionalDirectory: '/tmp'
         })
       );
       expect(script).toContain('--mount-rw');
@@ -382,8 +413,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/nfs/tpolk/mind',
-          isNfsWorkingDirectory: true
+          additionalDirectory: '/nfs/tpolk/mind',
+          isNfsAdditionalDirectory: true
         })
       );
       expect(script).toContain(':/data');
@@ -393,8 +424,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: true
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: true
         })
       );
       expect(script).toContain(':/data');
@@ -408,8 +439,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: false
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: false
         })
       );
       expect(script).toContain(':/data');
@@ -421,8 +452,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.TinyRange,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: true
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: true
         })
       );
       expect(script).toContain(':/data');
@@ -435,8 +466,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: true
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: true
         })
       );
       expect(script).toContain('timeout 5 ls -ld');
@@ -448,8 +479,8 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.Docker,
-          workingDirectory: '/tmp',
-          isNfsWorkingDirectory: false
+          additionalDirectory: '/tmp',
+          isNfsAdditionalDirectory: false
         })
       );
       expect(script).not.toContain('NFS mount may be stale');
@@ -510,10 +541,19 @@ describe('generateLaunchScript', () => {
   // ── Custom storage directory ──
 
   describe('custom storage directory', () => {
-    it('uses default neurodesktop-storage when storageDirectory is empty', () => {
+    it('uses the platform default when storageDirectory is empty', () => {
       const script = generateLaunchScript(baseParams({ storageDirectory: '' }));
       expect(script).toContain(
-        '-v ~/neurodesktop-storage:/neurodesktop-storage'
+        `-v ${getDefaultStorageDirectory('linux')}:/neurodesktop-storage`
+      );
+    });
+
+    it('uses C:/neurodesktop-storage as the Windows default', () => {
+      const script = generateLaunchScript(
+        baseParams({ platform: 'win32', storageDirectory: '' })
+      );
+      expect(script).toContain(
+        '-v C:/neurodesktop-storage:/neurodesktop-storage'
       );
     });
 
@@ -649,7 +689,7 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.TinyRange,
-          workingDirectory: '/tmp'
+          additionalDirectory: '/tmp'
         })
       );
       expect(script).toContain('find /data -maxdepth 1 -exec chown');
@@ -660,7 +700,10 @@ describe('generateLaunchScript', () => {
 
     it('omits the /data fixups when no working dir is mounted', () => {
       const script = generateLaunchScript(
-        baseParams({ engineType: EngineType.TinyRange, workingDirectory: '' })
+        baseParams({
+          engineType: EngineType.TinyRange,
+          additionalDirectory: ''
+        })
       );
       expect(script).not.toContain('/data');
     });
@@ -669,7 +712,7 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({
           engineType: EngineType.TinyRange,
-          workingDirectory: '/tmp',
+          additionalDirectory: '/tmp',
           overrideDefaultServerArgs: true
         })
       );
@@ -699,7 +742,7 @@ describe('generateLaunchScript', () => {
           platform: 'win32',
           // Must exist on the machine running the test — generateLaunchScript
           // statSyncs the working dir before mounting it.
-          workingDirectory: '/tmp'
+          additionalDirectory: '/tmp'
         })
       );
       expect(script).toContain('chown -R 1000:1000 /neurodesktop-storage');
@@ -714,7 +757,7 @@ describe('generateLaunchScript', () => {
           baseParams({
             engineType: EngineType.TinyRange,
             platform,
-            workingDirectory: '/tmp'
+            additionalDirectory: '/tmp'
           })
         );
         expect(script).toContain(

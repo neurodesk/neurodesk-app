@@ -49,7 +49,13 @@ describe('ContainerConfigParser', () => {
   });
 
   it('reads image registry from config', () => {
-    expect(parser.getImageRegistry()).toBe('vnmd/neurodesktop');
+    expect(parser.getImageRegistry()).toBe('docker.io/vnmd/neurodesktop');
+  });
+
+  it('builds a fully qualified image name from registry and version', () => {
+    expect(parser.getImageName()).toBe(
+      `docker.io/vnmd/neurodesktop:${parser.getImageVersion()}`
+    );
   });
 
   it('reads image version (defaultVersion) from config', () => {
@@ -138,8 +144,26 @@ describe('ContainerConfigParser', () => {
       expect(joined).toContain('OLLAMA_HOST=');
     });
 
-    it('includes image registry', () => {
-      expect(joined).toContain('vnmd/neurodesktop:');
+    it('leaves the image out of the run flags', () => {
+      // The image is positional for Docker/Podman, so buildLaunchArgs appends
+      // it after every flag rather than parseArgs emitting it inline.
+      expect(joined).not.toContain('vnmd/neurodesktop:');
+    });
+
+    it('buildLaunchArgs puts the image after the last run flag', () => {
+      const args = parser.buildLaunchArgs(EngineType.Docker, makeContext(), {
+        platform: 'unix',
+        additionalDir: '/mnt/scratch',
+        osVersion: '2404'
+      });
+      const imageIdx = args.indexOf(parser.getImageName());
+      expect(imageIdx).toBeGreaterThan(-1);
+      const flagsBefore = args.slice(0, imageIdx).join(' ');
+      const after = args.slice(imageIdx + 1).join(' ');
+      expect(flagsBefore).toContain('--security-opt apparmor=neurodeskapp');
+      expect(flagsBefore).toContain('--volume "/mnt/scratch":/data');
+      // Only the container command may follow the image.
+      expect(after.startsWith('start.sh jupyter lab')).toBe(true);
     });
   });
 
@@ -151,7 +175,7 @@ describe('ContainerConfigParser', () => {
     beforeAll(() => {
       const args = parser.parseArgs(
         EngineType.Docker,
-        makeContext(),
+        makeContext({ storageDir: 'C://neurodesktop-storage' }),
         'windows'
       );
       joined = args.join(' ');
@@ -311,16 +335,20 @@ describe('ContainerConfigParser', () => {
     });
   });
 
-  // ── Parity with generateLaunchScript ──
+  // ── Complete launch commands ──
+  //
+  // baseContainerConfig.yml is the only source of these flags, so this block
+  // is the regression net for it: every flag the app relies on, per engine and
+  // platform, asserted against the command buildLaunchArgs actually produces.
 
-  describe('parity with generateLaunchScript flags', () => {
-    it('Docker unix has all flags from generateLaunchScript', () => {
-      const ctx = makeContext();
-      const args = parser.parseArgs(EngineType.Docker, ctx, 'unix');
-      const serverArgs = parser.getDefaultServerArgs(ctx);
-      const all = [...args, ...serverArgs].join(' ');
+  describe('complete launch command', () => {
+    it('Docker unix has every required flag', () => {
+      const all = parser
+        .buildLaunchArgs(EngineType.Docker, makeContext(), {
+          platform: 'unix'
+        })
+        .join(' ');
 
-      // Every flag that generateLaunchScript produces for Docker unix
       const requiredFlags = [
         'docker run -d --rm',
         '--shm-size=1gb',
@@ -339,7 +367,7 @@ describe('ContainerConfigParser', () => {
         '--mac-address=88:75:56:ef:3e:d6',
         '--add-host=host.docker.internal:',
         'OLLAMA_HOST=',
-        'vnmd/neurodesktop:',
+        'docker.io/vnmd/neurodesktop:',
         'start.sh jupyter lab',
         '--no-browser',
         '--expose-app-in-browser',
@@ -354,11 +382,14 @@ describe('ContainerConfigParser', () => {
       }
     });
 
-    it('Docker windows has all flags from generateLaunchScript', () => {
-      const ctx = makeContext();
-      const args = parser.parseArgs(EngineType.Docker, ctx, 'windows');
-      const serverArgs = parser.getDefaultServerArgs(ctx);
-      const all = [...args, ...serverArgs].join(' ');
+    it('Docker windows has every required flag', () => {
+      const all = parser
+        .buildLaunchArgs(
+          EngineType.Docker,
+          makeContext({ storageDir: 'C://neurodesktop-storage' }),
+          { platform: 'windows' }
+        )
+        .join(' ');
 
       const requiredFlags = [
         'docker run -d --rm',
@@ -382,10 +413,12 @@ describe('ContainerConfigParser', () => {
       }
     });
 
-    it('Podman unix has all flags from generateLaunchScript', () => {
-      const ctx = makeContext();
-      const args = parser.parseArgs(EngineType.Podman, ctx, 'unix');
-      const all = args.join(' ');
+    it('Podman unix has every required flag', () => {
+      const all = parser
+        .buildLaunchArgs(EngineType.Podman, makeContext(), {
+          platform: 'unix'
+        })
+        .join(' ');
 
       const requiredFlags = [
         'podman run -d --rm',
@@ -407,19 +440,20 @@ describe('ContainerConfigParser', () => {
       }
     });
 
-    it('TinyRange unix has all flags from generateLaunchScript', () => {
-      const ctx = makeContext({ serverPort: '9999' });
-      const args = parser.parseArgs(EngineType.TinyRange, ctx, 'unix');
-      const prelude = parser.getTinyrangePrelude(ctx, 'unix');
-      const serverArgs = parser.getDefaultServerArgs(ctx);
-      const postArgs = parser.getTinyrangePostArgs();
-      const all = [...args, prelude, ...serverArgs, postArgs].join(' ');
+    it('TinyRange unix has every required flag', () => {
+      const all = parser
+        .buildLaunchArgs(
+          EngineType.TinyRange,
+          makeContext({ serverPort: '9999' }),
+          { platform: 'unix' }
+        )
+        .join(' ');
 
       const requiredFlags = [
         '/usr/local/bin/tinyrange',
         'login',
         '--buildDir',
-        '--oci vnmd/neurodesktop:',
+        '--oci docker.io/vnmd/neurodesktop:',
         '--forward 9999',
         '-m //lib/qemu:user',
         '--mount-rw ~/neurodesktop-storage:/neurodesktop-storage',
@@ -439,6 +473,95 @@ describe('ContainerConfigParser', () => {
       for (const flag of requiredFlags) {
         expect(all).toContain(flag);
       }
+    });
+
+    it('TinyRange takes no trailing image name', () => {
+      // The image goes in inline as --oci; a trailing copy would be read as
+      // the guest command.
+      const args = parser.buildLaunchArgs(EngineType.TinyRange, makeContext(), {
+        platform: 'unix'
+      });
+      expect(parser.usesTrailingImage(EngineType.TinyRange)).toBe(false);
+      expect(args.filter(a => a === parser.getImageName())).toHaveLength(0);
+    });
+
+    it('omits the server args when the user overrides them', () => {
+      const all = parser
+        .buildLaunchArgs(EngineType.Docker, makeContext(), {
+          platform: 'unix',
+          includeServerArgs: false
+        })
+        .join(' ');
+      expect(all).not.toContain('start.sh jupyter lab');
+      // The run flags and the image are still there.
+      expect(all).toContain('docker run -d --rm');
+      expect(all).toContain(parser.getImageName());
+    });
+
+    it('drops the TinyRange -E prelude when server args are overridden', () => {
+      // The prelude opens the quote that tinyrangePostArgs closes; emitting
+      // one without the other produces an unterminated string.
+      const all = parser
+        .buildLaunchArgs(EngineType.TinyRange, makeContext(), {
+          platform: 'unix',
+          includeServerArgs: false
+        })
+        .join(' ');
+      expect(all).not.toContain('-E "chmod 777 /dev/fuse');
+      expect(all).not.toContain('--FileContentsManager.delete_to_trash=False"');
+    });
+  });
+
+  // ── Conditional run args ──
+
+  describe('conditionalRunArgs', () => {
+    it('adds the apparmor profile for Docker on Ubuntu >= 23.10', () => {
+      expect(
+        parser.getConditionalRunArgs(EngineType.Docker, 'unix', '2404')
+      ).toContain('--security-opt apparmor=neurodeskapp');
+    });
+
+    it('omits it below the version floor', () => {
+      expect(
+        parser.getConditionalRunArgs(EngineType.Docker, 'unix', '2204')
+      ).toHaveLength(0);
+    });
+
+    it('omits it when the OS version is unknown (macOS/Windows)', () => {
+      expect(
+        parser.getConditionalRunArgs(EngineType.Docker, 'unix', '')
+      ).toHaveLength(0);
+      expect(
+        parser.getConditionalRunArgs(EngineType.Docker, 'windows', undefined)
+      ).toHaveLength(0);
+    });
+
+    it('is Docker-only — Podman and TinyRange have no apparmor profile', () => {
+      expect(
+        parser.getConditionalRunArgs(EngineType.Podman, 'unix', '2404')
+      ).toHaveLength(0);
+      expect(
+        parser.getConditionalRunArgs(EngineType.TinyRange, 'unix', '2404')
+      ).toHaveLength(0);
+    });
+  });
+
+  // ── TinyRange /data prelude ──
+
+  describe('tinyrangeAdditionalDirPrelude', () => {
+    it('fixes /data ownership when a directory is mounted', () => {
+      const prelude = parser.getTinyrangePrelude(
+        makeContext(),
+        'unix',
+        '/mnt/scratch'
+      );
+      expect(prelude).toContain('find /data -maxdepth 1 -exec chown');
+      expect(prelude).toContain('find /data -maxdepth 1 -exec chmod 777');
+    });
+
+    it('leaves the prelude alone when nothing is mounted at /data', () => {
+      const prelude = parser.getTinyrangePrelude(makeContext(), 'unix');
+      expect(prelude).not.toContain('/data');
     });
   });
 
@@ -467,38 +590,60 @@ describe('ContainerConfigParser', () => {
     });
   });
 
-  // ── Version override pattern (mirrors server.ts:580) ──
+  // ── Version override ──
 
   describe('version override', () => {
-    it('uses override version instead of YAML defaultVersion', () => {
-      const yamlVersion = parser.getImageVersion();
-      const overrideVersion = '2025-01-15';
-      expect(overrideVersion).not.toBe(yamlVersion);
-
-      // This is the pattern from server.ts:
-      // const version = imageVersion || parser.getImageVersion();
-      // const imageRegistry = parser.getImageRegistry() + ':' + version;
-      const version = overrideVersion || parser.getImageVersion();
-      const imageRegistry = parser.getImageRegistry() + ':' + version;
-
-      expect(imageRegistry).toBe('vnmd/neurodesktop:2025-01-15');
+    it('uses the override everywhere the version appears', () => {
+      const overridden = new ContainerConfigParser(
+        baseConfigPath,
+        containerConfigPath,
+        '2025-01-15'
+      );
+      expect(overridden.getImageVersion()).toBe('2025-01-15');
+      expect(overridden.getImageName()).toBe(
+        'docker.io/vnmd/neurodesktop:2025-01-15'
+      );
+      // {tag} and {imageRegistry} must follow the override, not defaultVersion.
+      const all = overridden
+        .buildLaunchArgs(EngineType.Docker, makeContext(), {
+          platform: 'unix'
+        })
+        .join(' ');
+      expect(all).toContain('-e NEURODESKTOP_VERSION=2025-01-15');
+      expect(all).toContain('docker.io/vnmd/neurodesktop:2025-01-15');
+      expect(all).not.toContain(overridden.getDefaultImageVersion());
     });
 
-    it('falls back to YAML defaultVersion when no override', () => {
-      const imageVersion: string | undefined = undefined;
-      const version = imageVersion || parser.getImageVersion();
-      const imageRegistry = parser.getImageRegistry() + ':' + version;
-
-      expect(imageRegistry).toContain('vnmd/neurodesktop:');
-      expect(imageRegistry).not.toBe('vnmd/neurodesktop:');
+    it('falls back to the YAML defaultVersion when no override is given', () => {
+      const plain = new ContainerConfigParser(
+        baseConfigPath,
+        containerConfigPath
+      );
+      expect(plain.getImageVersion()).toBe(plain.getDefaultImageVersion());
+      expect(plain.getImageName()).toBe(
+        `docker.io/vnmd/neurodesktop:${plain.getDefaultImageVersion()}`
+      );
     });
 
-    it('uses custom tag as override', () => {
-      const customTag = 'my-custom-prerelease';
-      const version = customTag || parser.getImageVersion();
-      const imageRegistry = parser.getImageRegistry() + ':' + version;
+    it('accepts a custom tag, not just a dated release', () => {
+      const custom = new ContainerConfigParser(
+        baseConfigPath,
+        containerConfigPath,
+        'my-custom-prerelease'
+      );
+      expect(custom.getImageName()).toBe(
+        'docker.io/vnmd/neurodesktop:my-custom-prerelease'
+      );
+    });
 
-      expect(imageRegistry).toBe('vnmd/neurodesktop:my-custom-prerelease');
+    it('setImageVersion resets to defaultVersion when cleared', () => {
+      const p = new ContainerConfigParser(
+        baseConfigPath,
+        containerConfigPath,
+        '2025-01-15'
+      );
+      p.setImageVersion(undefined);
+      expect(p.getImageVersion()).toBe(p.getDefaultImageVersion());
     });
   });
 });

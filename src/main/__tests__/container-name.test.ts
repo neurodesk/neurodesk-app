@@ -27,24 +27,26 @@ describe('resolveContainerName', () => {
     execSyncMock.mockReset();
   });
 
-  it('returns the base container name for every engine', () => {
+  it('returns the name it was given for every engine', () => {
     for (const engineType of [
       EngineType.Docker,
       EngineType.Podman,
       EngineType.TinyRange
     ]) {
-      expect(resolveContainerName(engineType)).toBe('neurodeskapp');
+      expect(resolveContainerName(engineType, 'neurodeskapp')).toBe(
+        'neurodeskapp'
+      );
     }
   });
 
   it('does not shell out for TinyRange (no container to remove)', () => {
-    resolveContainerName(EngineType.TinyRange);
+    resolveContainerName(EngineType.TinyRange, 'neurodeskapp');
     expect(execSyncMock).not.toHaveBeenCalled();
   });
 
   it('removes a stale container before reusing the name (Docker)', () => {
     withPlatform('linux', () => {
-      resolveContainerName(EngineType.Docker);
+      resolveContainerName(EngineType.Docker, 'neurodeskapp');
     });
     expect(execSyncMock).toHaveBeenCalledTimes(1);
     expect(execSyncMock.mock.calls[0][0]).toContain(
@@ -53,23 +55,31 @@ describe('resolveContainerName', () => {
   });
 
   it('wraps the removal in timeout 30 on Linux only', () => {
-    withPlatform('linux', () => resolveContainerName(EngineType.Podman));
+    withPlatform('linux', () =>
+      resolveContainerName(EngineType.Podman, 'neurodeskapp')
+    );
     expect(execSyncMock.mock.calls[0][0]).toContain('timeout 30 podman rm -f');
 
     execSyncMock.mockReset();
-    withPlatform('darwin', () => resolveContainerName(EngineType.Docker));
+    withPlatform('darwin', () =>
+      resolveContainerName(EngineType.Docker, 'neurodeskapp')
+    );
     expect(execSyncMock.mock.calls[0][0]).not.toContain('timeout 30');
   });
 
   it('uses cmd.exe redirection on Windows', () => {
-    withPlatform('win32', () => resolveContainerName(EngineType.Docker));
+    withPlatform('win32', () =>
+      resolveContainerName(EngineType.Docker, 'neurodeskapp')
+    );
     const cmd = execSyncMock.mock.calls[0][0];
     expect(cmd).toContain('>NUL 2>&1');
     expect(cmd).not.toContain('&>/dev/null');
   });
 
   it('passes a hard timeout so a wedged daemon cannot block startup', () => {
-    withPlatform('linux', () => resolveContainerName(EngineType.Docker));
+    withPlatform('linux', () =>
+      resolveContainerName(EngineType.Docker, 'neurodeskapp')
+    );
     expect(execSyncMock.mock.calls[0][1]).toMatchObject({ timeout: 35000 });
   });
 
@@ -78,7 +88,9 @@ describe('resolveContainerName', () => {
       throw new Error('No such container: neurodeskapp');
     });
     withPlatform('linux', () => {
-      expect(resolveContainerName(EngineType.Docker)).toBe('neurodeskapp');
+      expect(resolveContainerName(EngineType.Docker, 'neurodeskapp')).toBe(
+        'neurodeskapp'
+      );
     });
   });
 });
