@@ -4,6 +4,11 @@ registry: docker.io/vnmd/neurodesktop
 releaseHistoryUrl: https://raw.githubusercontent.com/neurodesk/neurodesk.github.io-astro/refs/heads/main/src/content/docs/overview/release-history/index.mdx
 containerName: neurodeskapp
 volumeMount: neurodesk-home
+# NeurodeskAppX engine: boots this systemd/Glass image in a VM instead of the
+# Docker image above. The version picked in the welcome view is still passed
+# to the guest as NEURODESKTOP_VERSION.
+ndappx:
+  image: ghcr.io/tinyrange/neurodesktop-glass:latest-estargz
 description: |
   Neuroimaging tools and resources for neuroimaging research and analysis.
 remoteUrl:

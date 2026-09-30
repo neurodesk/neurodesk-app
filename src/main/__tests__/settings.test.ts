@@ -17,6 +17,10 @@ describe('EngineType enum', () => {
   it('has TinyRange value', () => {
     expect(EngineType.TinyRange).toBe('tinyrange');
   });
+
+  it('has NeurodeskAppX value', () => {
+    expect(EngineType.NeurodeskAppX).toBe('ndappx');
+  });
 });
 
 describe('CvmfsMode enum', () => {

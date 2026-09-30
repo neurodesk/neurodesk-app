@@ -3,6 +3,7 @@
   "jlab_version": "4.0.0-1",
   "version": "2.0.0",
   "tinyrange_version": "0.4.0",
+  "ndappx_version": "0.10.1",
   "description": "Neurodesk App",
   "main": "./build/out/main/main.js",
   "scripts": {
@@ -59,6 +60,7 @@
       "!**/*.js.map",
       "!env_installer/NeurodeskApp*.*",
       "!tinyrange/**",
+      "!ndappx/**",
       "!media/**"
     ],
     "extraResources": [
@@ -83,6 +85,10 @@
         {
           "from": "tinyrange",
           "to": "app/tinyrange"
+        },
+        {
+          "from": "ndappx",
+          "to": "app/ndappx"
         }
       ]
     },
@@ -104,6 +110,10 @@
         {
           "from": "tinyrange",
           "to": "resources/app/tinyrange"
+        },
+        {
+          "from": "ndappx",
+          "to": "resources/app/ndappx"
         }
       ],
       "icon": "dist-resources/icon.ico"
@@ -162,6 +172,10 @@
             "!**/tinyqemu/{qemu-system-aarch64,qemu-system-x86_64}"
           ],
           "to": "app/tinyrange"
+        },
+        {
+          "from": "ndappx",
+          "to": "app/ndappx"
         }
       ]
     },

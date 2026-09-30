@@ -18,6 +18,18 @@ import {
   TelemetryConsent,
   ThemeType
 } from '../config/settings';
+/**
+ * NeurodeskAppX ships for Apple Silicon macOS, Linux x64/ARM64 and Windows x64.
+ */
+function isNdappxSupported(): boolean {
+  const { platform, arch } = process;
+  return (
+    (platform === 'darwin' && arch === 'arm64') ||
+    (platform === 'linux' && (arch === 'x64' || arch === 'arm64')) ||
+    (platform === 'win32' && arch === 'x64')
+  );
+}
+
 export class SettingsDialog {
   constructor(options: SettingsDialog.IOptions) {
     this._window = new ThemedWindow({
@@ -204,6 +216,9 @@ export class SettingsDialog {
                 <jp-radio name="engine-type" value="docker" <%= engineType === 'docker' ? 'checked' : '' %>>Docker</jp-radio>
                 <jp-radio name="engine-type" value="podman" <%= engineType === 'podman' ? 'checked' : '' %>>Podman</jp-radio>
                 <jp-radio name="engine-type" value="tinyrange" <%= engineType === 'tinyrange' ? 'checked' : '' %>>TinyRange</jp-radio>
+                <% if (ndappxSupported) { %>
+                <jp-radio name="engine-type" value="ndappx" <%= engineType === 'ndappx' ? 'checked' : '' %>>NeurodeskAppX (native VM)</jp-radio>
+                <% } %>
                 </jp-radio-group>
 
               <jp-radio-group orientation="horizontal">
@@ -464,6 +479,7 @@ export class SettingsDialog {
     `;
     this._pageBody = ejs.render(template, {
       engineType,
+      ndappxSupported: isNdappxSupported(),
       startupMode,
       cvmfsMode,
       theme,

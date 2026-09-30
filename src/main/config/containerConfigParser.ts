@@ -76,6 +76,18 @@ export interface ContainerConfig {
   description?: string;
   remoteUrl?: string[];
   tags?: string[];
+  /** Overrides for the NeurodeskAppX engine. */
+  ndappx?: {
+    /**
+     * Full image reference (repository:tag) for the VM. NeurodeskAppX needs a
+     * systemd image with neurodesktop-glass.service, which the Docker image
+     * is not, and Glass tags do not follow the Neurodesktop release versions,
+     * so this pins the tag. Takes precedence over `registry`.
+     */
+    image?: string;
+    /** Image repository for the VM, used with the selected version. */
+    registry?: string;
+  };
 }
 
 /**
@@ -481,6 +493,20 @@ export class ContainerConfigParser {
    */
   public getImageName(): string {
     return `${this.containerConfig.registry}:${this.version}`;
+  }
+
+  /**
+   * Image reference NeurodeskAppX pulls: `ndappx.image` when set, otherwise
+   * the ndappx registry override (or the regular registry) with the
+   * selected version.
+   */
+  public getNdappxImageName(): string {
+    const ndappx = this.containerConfig.ndappx;
+    if (ndappx?.image) {
+      return ndappx.image;
+    }
+    const registry = ndappx?.registry || this.containerConfig.registry;
+    return `${registry}:${this.version}`;
   }
 
   /**

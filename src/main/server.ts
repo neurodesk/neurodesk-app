@@ -26,6 +26,7 @@ import {
   PlatformType,
   VariableContext
 } from './config/containerConfigParser';
+import { NdappxServer } from './ndappx/server';
 
 const SERVER_LAUNCH_TIMEOUT = 40 * 60000; // milliseconds
 const JUPYTER_STARTUP_TIMEOUT = 10 * 60000; // 10 min for Jupyter to start after container is up
@@ -443,6 +444,52 @@ function getHostOsVersion(): string {
   }
 }
 
+/**
+ * Path of the bundled NeurodeskAppX executable. NEURODESK_NDAPPX_PATH
+ * overrides it, e.g. to point at a local crumblecracker build.
+ */
+export function resolveNdappxPath(platform: string = process.platform): string {
+  if (process.env.NEURODESK_NDAPPX_PATH) {
+    return process.env.NEURODESK_NDAPPX_PATH;
+  }
+  const binary =
+    platform === 'win32'
+      ? 'NeurodeskAppX.exe'
+      : platform === 'darwin'
+      ? path.join('NeurodeskAppX.app', 'Contents', 'MacOS', 'NeurodeskAppX')
+      : 'NeurodeskAppX';
+  return process.env.NODE_ENV === 'development'
+    ? path.join(__dirname, '../../..', 'ndappx', binary)
+    : path.join(process.resourcesPath, 'app', 'ndappx', binary);
+}
+
+/**
+ * Parser for a mini app's container_installer config, with the image
+ * version picked in the welcome view (or the config's defaultVersion).
+ */
+export function createContainerConfigParser(
+  containerConfigName: string,
+  imageVersion?: string
+): ContainerConfigParser {
+  const baseContainerConfigPath = path.join(
+    __dirname,
+    'config/baseContainerConfig.yml'
+  );
+  const containerConfigPath = path.join(
+    __dirname,
+    '../container_installer',
+    containerConfigName + '.yml'
+  );
+  log.debug(
+    `baseContainerConfigPath: ${baseContainerConfigPath}, containerConfigName: ${containerConfigPath}`
+  );
+  return new ContainerConfigParser(
+    baseContainerConfigPath,
+    containerConfigPath,
+    imageVersion
+  );
+}
+
 function resolveTinyrangePath(isWin: boolean): string {
   const isDev = process.env.NODE_ENV === 'development';
   const binary = isWin ? 'tinyrange.exe' : 'tinyrange';
@@ -467,24 +514,7 @@ function createLaunchScript(
   const isWin = process.platform === 'win32';
   const isTinyRange = engineType === EngineType.TinyRange;
 
-  const baseContainerConfigPath = path.join(
-    __dirname,
-    'config/baseContainerConfig.yml'
-  );
-  const containerConfigPath = path.join(
-    __dirname,
-    '../container_installer',
-    containerConfigName + '.yml'
-  );
-  log.debug(
-    `baseContainerConfigPath: ${baseContainerConfigPath}, containerConfigName: ${containerConfigPath}`
-  );
-
-  const parser = new ContainerConfigParser(
-    baseContainerConfigPath,
-    containerConfigPath,
-    imageVersion
-  );
+  const parser = createContainerConfigParser(containerConfigName, imageVersion);
 
   const storageDirectory =
     userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
@@ -606,7 +636,17 @@ export async function waitUntilServerIsUp(url: URL): Promise<boolean> {
   });
 }
 
-export class JupyterServer {
+/**
+ * What the session window needs from a server, whichever engine runs it.
+ */
+export interface IServer {
+  readonly info: JupyterServer.IInfo;
+  readonly started: Promise<boolean>;
+  start(port?: number, token?: string): Promise<JupyterServer.IInfo>;
+  stop(): Promise<void>;
+}
+
+export class JupyterServer implements IServer {
   constructor(options: JupyterServer.IOptions, progressView: ProgressView) {
     this._options = options;
     this._progressView = progressView;
@@ -1079,6 +1119,7 @@ export class JupyterServer {
   private _options: JupyterServer.IOptions;
   private _info: JupyterServer.IInfo = {
     type: 'local',
+    displayMode: 'lab',
     engine: null,
     url: null,
     port: null,
@@ -1107,8 +1148,13 @@ export namespace JupyterServer {
 
   export interface IInfo {
     type: 'local' | 'remote';
+    /**
+     * 'lab': JupyterLab at `url`, shown in the lab view.
+     * 'native': the engine opens its own desktop window; `url` is null.
+     */
+    displayMode: 'lab' | 'native';
     engine: EngineType;
-    url: URL;
+    url: URL | null;
     port: number;
     token: string;
     workingDirectory: string;
@@ -1325,7 +1371,7 @@ export class JupyterServerFactory implements IServerFactory, IDisposable {
   ): JupyterServerFactory.IFactoryItem {
     let item: JupyterServerFactory.IFactoryItem = {
       factoryId: this._nextId++,
-      server: new JupyterServer(opts, progressView),
+      server: createServerForEngine(opts, progressView),
       closing: null,
       used: false
     };
@@ -1394,6 +1440,20 @@ export class JupyterServerFactory implements IServerFactory, IDisposable {
   private _disposePromise: Promise<void>;
 }
 
+function createServerForEngine(
+  opts: JupyterServer.IOptions,
+  progressView?: ProgressView
+): IServer {
+  const workingDir =
+    opts?.workingDirectory || userSettings.resolvedWorkingDirectory;
+  const engine = new WorkspaceSettings(workingDir).getValue(
+    SettingType.engineType
+  );
+  return engine === EngineType.NeurodeskAppX
+    ? new NdappxServer(opts, progressView)
+    : new JupyterServer(opts, progressView);
+}
+
 export namespace JupyterServerFactory {
   /**
    * The object created by the JupyterServerFactory.
@@ -1416,8 +1476,8 @@ export namespace JupyterServerFactory {
     closing: Promise<void>;
 
     /**
-     * The actual Jupyter server object.
+     * The actual server object.
      */
-    server: JupyterServer;
+    server: IServer;
   }
 }

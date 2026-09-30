@@ -23,6 +23,7 @@ import {
   CtrlWBehavior,
   DEFAULT_WIN_HEIGHT,
   DEFAULT_WIN_WIDTH,
+  EngineType,
   LogLevel,
   resolveWorkingDirectory,
   SettingType,
@@ -966,10 +967,16 @@ export class JupyterApplication implements IApplication, IDisposable {
   }
 
   private _quit(): void {
+    // NeurodeskAppX shuts its VM down gracefully (up to 30s plus process
+    // exit); a forced exit earlier can lose persistent home writes.
+    const timeoutMs =
+      userSettings.getValue(SettingType.engineType) === EngineType.NeurodeskAppX
+        ? 60000
+        : 15000;
     const forceExit = setTimeout(() => {
-      log.warn('Shutdown timed out after 15s, forcing exit');
+      log.warn(`Shutdown timed out after ${timeoutMs / 1000}s, forcing exit`);
       process.exit(1);
-    }, 15000);
+    }, timeoutMs);
     forceExit.unref();
 
     this.dispose()

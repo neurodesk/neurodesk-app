@@ -17,7 +17,8 @@ export enum ThemeType {
 export enum EngineType {
   Docker = 'docker',
   Podman = 'podman',
-  TinyRange = 'tinyrange'
+  TinyRange = 'tinyrange',
+  NeurodeskAppX = 'ndappx'
 }
 
 export enum StartupMode {

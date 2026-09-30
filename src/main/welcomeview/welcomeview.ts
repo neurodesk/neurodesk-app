@@ -179,22 +179,22 @@ export class WelcomeView {
               background: white;
               border-radius: 4px;
               padding: 24px;
-              box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+              box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
               transition: all 0.3s ease;
               position: relative;
           }
 
           .app-ui-dark .app-card {
               background: #4f4f4f;
-              box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+              box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
           }
 
           .app-card:hover {
-              box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+              box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
           }
 
           .app-ui-dark .app-card:hover {
-              box-shadow: 0 20px 40px rgba(66, 66, 66, 0.4);
+              box-shadow: 0 6px 12px rgba(66, 66, 66, 0.4);
           }
 
           .app-title {

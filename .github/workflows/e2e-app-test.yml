@@ -128,6 +128,13 @@ jobs:
           curl -fSL -o tinyrange.zip "https://github.com/tinyrange/tinyrange/releases/download/v${TR_VERSION}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip"
           unzip tinyrange.zip
 
+      - name: Install NeurodeskAppX (fallback build)
+        if: steps.download.outcome == 'failure'
+        run: |
+          # tinyrange_os uses '-', crumblecracker assets use '_' (linux-amd64 -> linux_amd64)
+          TR_OS="${{ matrix.cfg.tinyrange_os }}"
+          scripts/fetch-ndappx.sh "${TR_OS//-/_}"
+
       - name: Build distribution package (fallback build)
         if: steps.download.outcome == 'failure'
         env:

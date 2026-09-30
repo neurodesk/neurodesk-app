@@ -17,10 +17,10 @@ jobs:
     strategy:
       matrix:
         cfg:
-          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64 }
-          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64 }
-          - { platform: mac, platform_name: macOS, os: macos-latest, tinyrange_os: darwin-arm64 }
-          - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64 }
+          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, ndappx_os: linux_amd64 }
+          - { platform: linux-arm64, platform_name: Linux arm64,  os: ubuntu-latest, tinyrange_os: linux-arm64, ndappx_os: linux_arm64 }
+          - { platform: mac, platform_name: macOS, os: macos-latest, tinyrange_os: darwin-arm64, ndappx_os: darwin_arm64 }
+          - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, ndappx_os: windows_amd64 }
   
     name: '${{ matrix.cfg.platform_name }} installer'
     runs-on: ${{ matrix.cfg.os }}
@@ -65,6 +65,9 @@ jobs:
           curl -o tinyrange.zip -L https://github.com/tinyrange/tinyrange/releases/download/v${{ steps.package-info.outputs.tinyrange_version}}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip
           unzip tinyrange.zip
           echo $(ls)
+
+      - name: Install NeurodeskAppX
+        run: scripts/fetch-ndappx.sh ${{ matrix.cfg.ndappx_os }}
 
       - name: 'Find Release with tag v${{ steps.package-info.outputs.version}}'
         uses: actions/github-script@v8

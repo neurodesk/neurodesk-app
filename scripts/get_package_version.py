@@ -9,6 +9,8 @@ def get_package_version(path, package_name):
             return package['version']
         elif package_name == 'tinyrange':
             return package['tinyrange_version']
+        elif package_name == 'ndappx':
+            return package['ndappx_version']
         else:
             raise ValueError(f"Unknown package: {package}")
 

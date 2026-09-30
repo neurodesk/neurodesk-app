@@ -39,10 +39,49 @@ import { SessionConfig } from '../config/sessionconfig';
 import { ISignal, Signal } from '@lumino/signaling';
 import { EventTypeMain } from '../eventtypes';
 import { EventManager } from '../eventmanager';
+import { INativeSessionStatus, NdappxServer } from '../ndappx/server';
 
 export enum ContentViewType {
   Welcome = 'welcome',
   Lab = 'lab'
+}
+
+/** Failure hint and install link shown when a session cannot start. */
+const ENGINE_HELP: {
+  [engine: string]: { check: string; url: string; linkText: string };
+} = {
+  docker: {
+    check: 'Check if Docker is running and try again.',
+    url: 'https://docs.docker.com/engine/install/',
+    linkText: 'Install Docker'
+  },
+  podman: {
+    check: 'Check if Podman is running and try again.',
+    url: 'https://podman.io/docs/installation',
+    linkText: 'Install Podman'
+  },
+  tinyrange: {
+    check: 'Check if QEMU is running and try again.',
+    url:
+      'https://www.neurodesk.org/docs/getting-started/local/neurodeskapp/#install-qemu',
+    linkText: 'Install QEMU'
+  },
+  ndappx: {
+    check:
+      'Check that hardware virtualization is available (KVM on Linux, Windows Hypervisor Platform on Windows) and try again.',
+    url:
+      'https://github.com/tinyrange/crumblecracker/blob/main/docs/headless.md',
+    linkText: 'NeurodeskAppX requirements'
+  }
+};
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export interface IServerInfo {
@@ -317,6 +356,10 @@ export class SessionWindow implements IDisposable {
   }
 
   private _loadLabView() {
+    if (this._isNativeSession) {
+      this._loadNativeSessionView();
+      return;
+    }
     if (!this._sessionConfig?.url) {
       this._showProgressView(
         'Failed to load JupyterLab',
@@ -495,14 +538,7 @@ export class SessionWindow implements IDisposable {
         this._wsSettings = new WorkspaceSettings(
           sessionConfig.workingDirectory
         );
-        let installEngineURL =
-          this._engineType === 'docker'
-            ? '<div class="message-row"><a href="https://docs.docker.com/engine/install/">Install Docker</a></div>'
-            : this._engineType === 'podman'
-            ? '<div class="message-row"><a href="https://podman.io/docs/installation">Install Podman</a></div>'
-            : '<div class="message-row"><a href="https://www.neurodesk.org/docs/getting-started/local/neurodeskapp/#install-qemu">Install QEMU</a></div>';
-        let engineName =
-          this._engineType.charAt(0).toUpperCase() + this._engineType.slice(1);
+        const engineHelp = ENGINE_HELP[this._engineType] || ENGINE_HELP.docker;
 
         try {
           await this._createServerForSession(this._progressView);
@@ -512,18 +548,24 @@ export class SessionWindow implements IDisposable {
           });
         } catch (error) {
           this._showProgressView(
-            `Failed to create session!\nCheck if ${
-              this._engineType === 'tinyrange' ? 'QEMU' : engineName
-            } is running and try again.`,
+            `Failed to create session!\n${engineHelp.check}`,
             `
-            <div class="message-row">${error}</div>
-            ${installEngineURL}
+            <div class="message-row">${escapeHtml(
+              error?.message || String(error)
+            )}</div>
+            <div class="message-row"><a href="${engineHelp.url}">${
+              engineHelp.linkText
+            }</a></div>
             <div class="message-row">
               <a href="https://github.com/NeuroDesk/neurodesk-app/blob/master/user-guide.md#uninstalling-neurodesk-app">Or follow this instruction to uninstall and reinstall Neurodesk App</a>
             </div>
-            <div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowLogs}')">Show logs</a></div>
+            <div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${
+              EventTypeMain.ShowLogs
+            }')">Show logs</a></div>
             <div class="message-row">
-              <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
+              <a href="javascript:void(0);" onclick="sendMessageToMain('${
+                EventTypeMain.ShowWelcomeView
+              }')">Go to Welcome Page</a>
             </div>
           `,
             false
@@ -537,7 +579,9 @@ export class SessionWindow implements IDisposable {
         this._updateSessionWindowPositionConfig();
         this._sessionConfigChanged.emit();
 
-        if (type === 'notebook') {
+        if (this._isNativeSession) {
+          // The native session panel lives in the progress view.
+        } else if (type === 'notebook') {
           this.labView.labUIReady.then(() => {
             // this.labView.newNotebook();
             this._hideProgressView();
@@ -726,6 +770,29 @@ export class SessionWindow implements IDisposable {
         }
 
         this._hideProgressView();
+      }
+    );
+
+    this._evm.registerEventHandler(
+      EventTypeMain.NativeReopenDesktop,
+      async event => {
+        if (event.sender !== this._progressView?.view?.view?.webContents) {
+          return;
+        }
+        const server = this._server?.server;
+        if (server instanceof NdappxServer) {
+          await server.reopenDesktop();
+        }
+      }
+    );
+
+    this._evm.registerEventHandler(
+      EventTypeMain.NativeStopSession,
+      async event => {
+        if (event.sender !== this._progressView?.view?.view?.webContents) {
+          return;
+        }
+        this._closeSession();
       }
     );
 
@@ -1002,7 +1069,9 @@ export class SessionWindow implements IDisposable {
     this._updateSessionWindowPositionConfig();
     this._sessionConfigChanged.emit();
 
-    if (filesToOpen) {
+    if (this._isNativeSession) {
+      // The native session panel lives in the progress view.
+    } else if (filesToOpen) {
       this.labView.labUIReady.then(() => {
         this.labView.openFiles();
         this._hideProgressView();
@@ -1125,8 +1194,96 @@ export class SessionWindow implements IDisposable {
     this._updateContentView();
   }
 
+  private get _isNativeSession(): boolean {
+    return this._server?.server?.info.displayMode === 'native';
+  }
+
+  /**
+   * NeurodeskAppX draws the desktop in its own native window, so this window
+   * shows the session status and controls in the progress view instead of
+   * JupyterLab.
+   */
+  private _loadNativeSessionView() {
+    const server = this._server?.server;
+    if (!(server instanceof NdappxServer)) {
+      return;
+    }
+    this.titleBarView.setTitle('Neurodesk desktop');
+    this._window.setTitle('Neurodesk desktop');
+    if (this._nativeStatusServer !== server) {
+      this._nativeStatusServer?.statusChanged.disconnect(
+        this._onNativeStatus,
+        this
+      );
+      server.statusChanged.connect(this._onNativeStatus, this);
+      this._nativeStatusServer = server;
+    }
+    this._onNativeStatus(server, server.status);
+  }
+
+  private _onNativeStatus(sender: NdappxServer, status: INativeSessionStatus) {
+    if (this._window.isDestroyed() || this._server?.server !== sender) {
+      return;
+    }
+    const link = (event: EventTypeMain, text: string) =>
+      `<div class="message-row"><a href="javascript:void(0);" onclick="sendMessageToMain('${event}')">${text}</a></div>`;
+    const message = status.message
+      ? `<div class="message-row">${escapeHtml(status.message)}</div>`
+      : '';
+    const image = escapeHtml(
+      `${sender.info.containerConfigName || ''} ${
+        sender.info.imageVersion || ''
+      }`.trim()
+    );
+    const imageRow = image
+      ? `<div class="message-row">Image: ${image}</div>`
+      : '';
+    const stop = link(EventTypeMain.NativeStopSession, 'Stop session');
+    const logs = link(EventTypeMain.ShowLogs, 'Show logs');
+
+    switch (status.state) {
+      case 'open':
+        this._showProgressView(
+          'Neurodesk desktop is running',
+          `<div class="message-row">The desktop is open in its own window.</div>${imageRow}${stop}${logs}`,
+          false
+        );
+        break;
+      case 'closed':
+        this._showProgressView(
+          'Neurodesk desktop window closed',
+          `<div class="message-row">The virtual machine is still running.</div>${message}${imageRow}${link(
+            EventTypeMain.NativeReopenDesktop,
+            'Reopen desktop'
+          )}${stop}${logs}`,
+          false
+        );
+        break;
+      case 'opening':
+        this._showProgressView('Opening desktop window', imageRow, true);
+        break;
+      case 'ended':
+        this._showProgressView(
+          'Neurodesk session ended',
+          `${message}${imageRow}${link(
+            EventTypeMain.NativeStopSession,
+            'Go to Welcome Page'
+          )}${logs}`,
+          false
+        );
+        break;
+    }
+  }
+
   private _closeSession() {
+    const isNative = this._isNativeSession;
+    if (isNative) {
+      this._showProgressView('Stopping Neurodesk', '', true);
+    }
     const showWelcome = () => {
+      if (isNative) {
+        this._hideProgressView();
+      }
       this._contentViewType = ContentViewType.Welcome;
       this._updateContentView();
     };
@@ -1174,6 +1331,7 @@ export class SessionWindow implements IDisposable {
   private _serverFactory: IServerFactory;
   private _app: IApplication;
   private _server: JupyterServerFactory.IFactoryItem;
+  private _nativeStatusServer: NdappxServer | null = null;
   private _remoteServerSelectDialog: RemoteServerSelectDialog;
   private _disposePromise: Promise<void>;
   private _sessionConfigChanged = new Signal<this, void>(this);

@@ -24,5 +24,9 @@
     <true/>
     <key>com.apple.security.virtualization</key>
     <true/>
+    <!-- Hypervisor.framework, needed by the bundled NeurodeskAppX (HVF) when
+         electron-builder re-signs it with entitlementsInherit. -->
+    <key>com.apple.security.hypervisor</key>
+    <true/>
   </dict>
 </plist>
