@@ -29,3 +29,4 @@ env_installer/
 tinyrange/
 # NeurodeskAppX (crumblecracker) binary, fetched by scripts/fetch-ndappx.sh
 ndappx/
+!src/main/ndappx/
