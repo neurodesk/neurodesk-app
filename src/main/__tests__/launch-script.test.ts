@@ -1,6 +1,12 @@
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { ContainerConfigParser } from '../config/containerConfigParser';
 import { EngineType } from '../config/settings';
+import {
+  getDefaultStorageDirectory as getStorageDirectory,
+  readDefaultStorageMount
+} from '../config/storageMount';
 import {
   generateLaunchScript,
   getDefaultStorageDirectory,
@@ -47,6 +53,75 @@ function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
     ...rest
   };
 }
+
+function parserWithStorageMount(mountName: string): ContainerConfigParser {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurodesk-mount-'));
+  const tempConfigPath = path.join(tempDir, 'neuroimaging.yml');
+  const config = fs
+    .readFileSync(containerConfigPath, 'utf8')
+    .replace(/^defaultStorageMount:.*$/m, `defaultStorageMount: ${mountName}`);
+  fs.writeFileSync(tempConfigPath, config);
+  try {
+    return new ContainerConfigParser(baseConfigPath, tempConfigPath);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+describe('YAML storage mount', () => {
+  it('keeps the Windows and Unix default host path patterns', () => {
+    expect(readDefaultStorageMount()).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
+    expect(getStorageDirectory('linux', 'app-storage', '/home/tester')).toBe(
+      '/home/tester/app-storage'
+    );
+    expect(getStorageDirectory('darwin', 'app-storage', '~')).toBe(
+      '~/app-storage'
+    );
+    expect(getStorageDirectory('win32', 'app-storage')).toBe('C:/app-storage');
+  });
+
+  it.each([
+    ['linux', EngineType.Docker],
+    ['linux', EngineType.Podman],
+    ['linux', EngineType.TinyRange],
+    ['win32', EngineType.Docker],
+    ['win32', EngineType.Podman],
+    ['win32', EngineType.TinyRange]
+  ])('%s / %s uses the configured mount', (platform, engineType) => {
+    const params = baseParams({
+      platform,
+      engineType,
+      storageDirectory: undefined
+    });
+    params.parser = parserWithStorageMount('app-storage');
+    const script = generateLaunchScript(params);
+    const hostPath = getStorageDirectory(platform, 'app-storage');
+
+    expect(script).toContain(`${hostPath}:/app-storage`);
+    expect(script).toContain('-e NEURODESK_STORAGE_MOUNT=app-storage');
+    expect(script).not.toContain(':/neurodesktop-storage');
+    if (engineType === EngineType.TinyRange) {
+      expect(script).toContain('chmod -R 777 /app-storage');
+    }
+  });
+
+  it('keeps a custom host directory and uses the configured container target', () => {
+    const params = baseParams({ storageDirectory: '/mnt/shared-data' });
+    params.parser = parserWithStorageMount('app-storage');
+    expect(generateLaunchScript(params)).toContain(
+      '-v /mnt/shared-data:/app-storage'
+    );
+  });
+
+  it.each(['../bad', '/absolute', 'two words'])(
+    'rejects invalid mount name %s',
+    mountName => {
+      expect(() => parserWithStorageMount(mountName)).toThrow(
+        'defaultStorageMount must be a single directory name'
+      );
+    }
+  );
+});
 
 describe('generateLaunchScript', () => {
   // ── Docker tests ──

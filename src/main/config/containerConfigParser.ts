@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import { EngineType } from './settings';
+import { validateStorageMount } from './storageMount';
 
 export type PlatformType = 'windows' | 'unix';
 
@@ -73,6 +74,7 @@ export interface ContainerConfig {
   releaseHistoryUrl?: string;
   containerName: string;
   volumeMount: string;
+  defaultStorageMount: string;
   description?: string;
   remoteUrl?: string[];
   tags?: string[];
@@ -108,6 +110,9 @@ export class ContainerConfigParser {
       baseContainerConfigPath
     );
     this.containerConfig = this.loadContainerConfig(containerConfigName);
+    this.containerConfig.defaultStorageMount = validateStorageMount(
+      this.containerConfig.defaultStorageMount
+    );
     this.version = version || this.containerConfig.defaultVersion;
   }
 
@@ -165,6 +170,7 @@ export class ContainerConfigParser {
       '{tinyrangePath}': context.tinyrangePath,
       '{buildDir}': context.buildDir || '',
       '{storageDir}': context.storageDir || '',
+      '{storageMount}': this.getDefaultStorageMount(),
       '{additionalDir}': context.additionalDir || '',
       '{imageRegistry}': this.getImageName(),
       '{volume_mount}': context.volumeMount || '',
@@ -531,5 +537,9 @@ export class ContainerConfigParser {
    */
   public getVolumeMount(): string | undefined {
     return this.containerConfig.volumeMount;
+  }
+
+  public getDefaultStorageMount(): string {
+    return this.containerConfig.defaultStorageMount;
   }
 }

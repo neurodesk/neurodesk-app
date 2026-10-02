@@ -26,6 +26,9 @@ import {
   PlatformType,
   VariableContext
 } from './config/containerConfigParser';
+import { getDefaultStorageDirectory } from './config/storageMount';
+
+export { getDefaultStorageDirectory } from './config/storageMount';
 
 const SERVER_LAUNCH_TIMEOUT = 40 * 60000; // milliseconds
 const JUPYTER_STARTUP_TIMEOUT = 10 * 60000; // 10 min for Jupyter to start after container is up
@@ -103,7 +106,7 @@ export interface ILaunchScriptParams {
   /** Host OS version (Ubuntu YYMM); empty when unknown. */
   osVersion: string;
   tinyrangePath: string;
-  /** Host directory mounted at /neurodesktop-storage. Defaults per platform. */
+  /** Host directory mounted at the configured storage mount. */
   storageDirectory?: string;
   /** Host directory mounted at /data, if the user configured one. */
   additionalDirectory?: string;
@@ -144,18 +147,6 @@ export function resolveContainerName(
 }
 
 /**
- * Host directory mounted at /neurodesktop-storage when the user has not set
- * one in the settings.
- */
-export function getDefaultStorageDirectory(
-  platform: string = process.platform
-): string {
-  return platform === 'win32'
-    ? 'C:/neurodesktop-storage'
-    : path.join(os.homedir(), 'neurodesktop-storage');
-}
-
-/**
  * Pure function that generates the launch script content.
  *
  * Every run flag, the image reference and the server args come from
@@ -190,6 +181,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
 
   const imageName = parser.getImageName();
   const volumeMount = parser.getVolumeMount();
+  const storageMount = parser.getDefaultStorageMount();
   // The same name the config puts in --name, so the lifecycle commands below
   // can never address a different container than the one being launched.
   const containerName = parser.getContainerName();
@@ -197,7 +189,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // Keep path separators forward-slashed so the generated script is identical
   // no matter which OS generates it (the Windows tests run on Linux).
   const resolvedStorageDirectory =
-    storageDirectory || getDefaultStorageDirectory(platform);
+    storageDirectory || getDefaultStorageDirectory(platform, storageMount);
   const storageDir = isWin
     ? resolvedStorageDirectory.replace(/\\/g, '//')
     : resolvedStorageDirectory;
@@ -486,9 +478,21 @@ function createLaunchScript(
     imageVersion
   );
 
+  const customStorageDirectory = userSettings.getValue(
+    SettingType.neurodesktopStorageDirectory
+  );
   const storageDirectory =
-    userSettings.getValue(SettingType.neurodesktopStorageDirectory) ||
-    getDefaultStorageDirectory();
+    customStorageDirectory ||
+    getDefaultStorageDirectory(
+      process.platform,
+      parser.getDefaultStorageMount()
+    );
+  if (!customStorageDirectory && !fs.existsSync(storageDirectory)) {
+    fs.mkdirSync(storageDirectory, { recursive: true });
+    if (process.platform === 'linux') {
+      fs.chmodSync(storageDirectory, 0o777);
+    }
+  }
 
   if (isTinyRange) {
     const buildDir = path.join(storageDirectory, 'build');

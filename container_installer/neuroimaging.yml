@@ -4,6 +4,7 @@ registry: docker.io/vnmd/neurodesktop
 releaseHistoryUrl: https://raw.githubusercontent.com/neurodesk/neurodesk.github.io-astro/refs/heads/main/src/content/docs/overview/release-history/index.mdx
 containerName: neurodeskapp
 volumeMount: neurodesk-home
+defaultStorageMount: neurodesktop-storage
 description: |
   Neuroimaging tools and resources for neuroimaging research and analysis.
 remoteUrl:

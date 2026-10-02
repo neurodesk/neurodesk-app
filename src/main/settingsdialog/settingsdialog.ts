@@ -6,6 +6,10 @@ import { BrowserWindow } from 'electron';
 import * as path from 'path';
 import { ThemedWindow } from '../dialog/themedwindow';
 import {
+  getDefaultStorageDirectory,
+  readDefaultStorageMount
+} from '../config/storageMount';
+import {
   CtrlWBehavior,
   CvmfsMode,
   EngineType,
@@ -475,10 +479,11 @@ export class SettingsDialog {
       // frontEndMode,
       defaultWorkingDirectory,
       neurodesktopStorageDirectory,
-      defaultStoragePlaceholder:
-        process.platform === 'win32'
-          ? 'C:/neurodesktop-storage'
-          : '~/neurodesktop-storage',
+      defaultStoragePlaceholder: getDefaultStorageDirectory(
+        process.platform,
+        readDefaultStorageMount(),
+        '~'
+      ),
       logLevel,
       serverArgs,
       // overrideDefaultServerArgs,

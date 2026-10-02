@@ -507,6 +507,7 @@ export class SessionWindow implements IDisposable {
         try {
           await this._createServerForSession(this._progressView);
           appData.addSessionToRecents({
+            containerConfigName: this._sessionConfig.containerConfigName,
             workingDirectory: this._sessionConfig.resolvedWorkingDirectory,
             filesToOpen: [...this._sessionConfig.filesToOpen]
           });
@@ -1012,6 +1013,7 @@ export class SessionWindow implements IDisposable {
     }
 
     appData.addSessionToRecents({
+      containerConfigName: sessionConfig.containerConfigName,
       workingDirectory: sessionConfig.resolvedWorkingDirectory,
       filesToOpen: [...sessionConfig.filesToOpen]
     });

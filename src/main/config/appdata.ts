@@ -16,6 +16,7 @@ export interface INewsItem {
 }
 
 export interface IRecentSession {
+  containerConfigName?: string;
   workingDirectory?: string;
   filesToOpen?: string[];
   remoteURL?: string;
@@ -76,6 +77,7 @@ export class ApplicationData {
     ) {
       for (const recentSession of jsonData.recentSessions) {
         this.recentSessions.push({
+          containerConfigName: recentSession.containerConfigName,
           workingDirectory: recentSession.workingDirectory,
           filesToOpen: recentSession.filesToOpen
             ? [...recentSession.filesToOpen]
@@ -126,6 +128,7 @@ export class ApplicationData {
     appDataJSON.recentSessions = [];
     for (const recentSession of this.recentSessions) {
       appDataJSON.recentSessions.push({
+        containerConfigName: recentSession.containerConfigName,
         workingDirectory: recentSession.workingDirectory,
         filesToOpen:
           recentSession.filesToOpen.length > 0
@@ -203,6 +206,7 @@ export class ApplicationData {
       return isRemote
         ? session.remoteURL === item.remoteURL
         : session.workingDirectory === item.workingDirectory &&
+            session.containerConfigName === item.containerConfigName &&
             filesToOpenCompare(session.filesToOpen, item.filesToOpen);
     });
 
@@ -210,6 +214,7 @@ export class ApplicationData {
 
     if (existing) {
       existing.date = now;
+      existing.containerConfigName = session.containerConfigName;
       // update persist info for remote
       if (isRemote) {
         existing.persistSessionData = session.persistSessionData;
@@ -231,6 +236,7 @@ export class ApplicationData {
     } else {
       let filesToOpen = [...(session.filesToOpen || [])];
       this.recentSessions.push({
+        containerConfigName: session.containerConfigName,
         workingDirectory: session.workingDirectory,
         filesToOpen: filesToOpen,
         remoteURL: session.remoteURL,

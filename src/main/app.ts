@@ -46,6 +46,10 @@ import { AuthDialog } from './authdialog/authdialog';
 import * as path from 'path';
 import { ConsentDialog } from './consentdialog/consentdialog';
 import { closeTelemetry, initTelemetry } from './telemetry';
+import {
+  getDefaultStorageDirectory,
+  readDefaultStorageMount
+} from './config/storageMount';
 
 const release = require(path.join(__dirname, '..', 'package.json')).version;
 
@@ -238,9 +242,11 @@ export function getNeurodesktopStoragePath(): string {
   if (custom) {
     return custom;
   }
-  return process.platform === 'win32'
-    ? 'C:/neurodesktop-storage'
-    : path.join(app.getPath('home'), 'neurodesktop-storage');
+  return getDefaultStorageDirectory(
+    process.platform,
+    readDefaultStorageMount(),
+    app.getPath('home')
+  );
 }
 
 function createNeurodesktopStorage() {

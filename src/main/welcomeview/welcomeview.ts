@@ -9,6 +9,11 @@ import { appData } from '../config/appdata';
 import { EventTypeRenderer } from '../eventtypes';
 import { ContainerConfig } from '../config/containerConfigParser';
 import * as yaml from 'js-yaml';
+import { SettingType, userSettings } from '../config/settings';
+import {
+  getDefaultStorageDirectory,
+  readDefaultStorageMount
+} from '../config/storageMount';
 
 interface IRecentSessionListItem {
   isRemote: boolean;
@@ -849,8 +854,25 @@ export class WelcomeView {
         }persisted`;
         sessionDetail = '';
       } else {
-        sessionItem = path.join(home, 'neurodesktop-storage');
-        tooltip = path.join(home, 'neurodesktop-storage');
+        const customStorage = userSettings.getValue(
+          SettingType.neurodesktopStorageDirectory
+        );
+        let storageMount = '';
+        if (!customStorage) {
+          try {
+            storageMount = readDefaultStorageMount(
+              recentSession.containerConfigName || undefined
+            );
+          } catch {
+            // A recent session can refer to an installer YAML that was removed.
+            storageMount = readDefaultStorageMount();
+          }
+        }
+        const storagePath =
+          customStorage ||
+          getDefaultStorageDirectory(process.platform, storageMount, home);
+        sessionItem = storagePath;
+        tooltip = storagePath;
       }
 
       recentSessionList.push({
