@@ -578,7 +578,7 @@ export class WelcomeView {
               const localButton = hasReleaseHistory
                 ? \`<div class="split-btn-wrapper">
                       <button class="split-btn-main"
-                              onclick="handleNewSessionClick('notebook', '\$\{app.title\}', null)">
+                              onclick="launchLatestVersion('\$\{app.id\}')">
                           Launch Local
                       </button>
                       <button class="split-btn-arrow"
@@ -668,6 +668,29 @@ export class WelcomeView {
 
           function handleNewSessionClick(type, containerConfigName, imageVersion) {
             window.electronAPI.newSession(type, containerConfigName, undefined, imageVersion || undefined);
+          }
+
+          async function launchLatestVersion(appId) {
+            const dropdown = document.getElementById('dropdown-' + appId);
+            const button = document.getElementById(appId).querySelector('.split-btn-main');
+            const appTitle = dropdown.dataset.appTitle;
+            const defaultVersion = dropdown.dataset.defaultVersion;
+            button.disabled = true;
+            button.textContent = 'Checking latest version...';
+
+            try {
+              const versions = await window.electronAPI.fetchReleases(
+                dropdown.dataset.releaseUrl,
+                defaultVersion
+              );
+              handleNewSessionClick('notebook', appTitle, versions[0] || defaultVersion);
+            } catch (err) {
+              console.error('Failed to load release history:', err);
+              handleNewSessionClick('notebook', appTitle, defaultVersion);
+            } finally {
+              button.disabled = false;
+              button.textContent = 'Launch Local';
+            }
           }
 
           function handleNewRemoteSessionClick(type, remoteUrl) {

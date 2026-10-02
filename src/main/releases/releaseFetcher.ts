@@ -59,12 +59,12 @@ export function parseReleaseVersions(markdown: string): string[] {
     const dateStr = match[1];
     // Validate it's a real date
     const parsed = new Date(dateStr + 'T00:00:00Z');
-    if (!isNaN(parsed.getTime())) {
+    if (!isNaN(parsed.getTime()) && parsed.toISOString().startsWith(dateStr)) {
       versions.push(dateStr);
     }
   }
 
-  return versions;
+  return [...new Set(versions)].sort().reverse();
 }
 
 function getCacheDir(): string {

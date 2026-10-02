@@ -103,6 +103,19 @@ Some overview text.
     // Only 2026-01-15 should pass
     expect(versions).toContain('2026-01-15');
     expect(versions).not.toContain('2026-13-45');
+    expect(versions).not.toContain('2026-02-30');
+  });
+
+  it('returns the newest unique release first even when headings are unordered', () => {
+    const markdown = `
+### 2026-07-11
+### 2026-09-23
+### 2026-07-11
+`;
+    expect(parseReleaseVersions(markdown)).toEqual([
+      '2026-09-23',
+      '2026-07-11'
+    ]);
   });
 
   it('does not match ## or #### headings', () => {
