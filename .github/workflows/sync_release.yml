@@ -39,6 +39,8 @@ jobs:
         
       - name: Check for new Neurodesk releases
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
           NEURODESK_LATEST=$(python scripts/get_neurodesk_version.py)
@@ -82,4 +84,4 @@ jobs:
 
           sudo apt install hub
           hub pull-request -m "Update to Neurodesk v${NEURODESK_LATEST}" \
-              -m "New Neurodesk release [v${NEURODESK_LATEST}](https://github.com/NeuroDesk/neurodesk.github.io/blob/main/data/neurodesktop.toml) is available. Please review the lock file carefully."
+              -m "New Neurodesk release [v${NEURODESK_LATEST}](https://github.com/neurodesk/neurodesktop/releases/tag/${NEURODESK_LATEST}) is available. Please review the lock file carefully."

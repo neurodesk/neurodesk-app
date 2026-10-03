@@ -1,7 +1,6 @@
 const meow = require('meow');
 const fs = require('fs-extra');
 const path = require('path');
-const https = require('https');
 
 // const neurodesktomlFilePath = path.resolve(__dirname, '../neurodesktop.toml');
 
@@ -16,7 +15,7 @@ const cli = meow(
       --help                     show usage information
 
     Examples
-      $ node neurodeskutil --set-neurodesk-version
+      $ node neurodeskutil --set-neurodesk-version 2026-09-23
 `,
   {
     flags: {
@@ -29,29 +28,29 @@ const cli = meow(
 );
 
 if (cli.flags.setNeurodeskVersion !== '') {
-  const url = `https://raw.githubusercontent.com/NeuroDesk/neurodesk.github.io/main/data/neurodesktop.toml`;
+  const version = cli.flags.setNeurodeskVersion;
+  const tomlPath = path.join(__dirname, '../neurodesktop.toml');
+  const versionLine = /^jupyter_neurodesk_version\s*=.*$/m;
 
-  https
-    .get(url, res => {
-      let body = '';
+  try {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(version)) {
+      throw new Error(`Invalid Neurodesk version: ${version}`);
+    }
 
-      res.on('data', chunk => {
-        body += chunk;
-      });
+    const toml = fs.readFileSync(tomlPath, 'utf8');
+    if (!versionLine.test(toml)) {
+      throw new Error(
+        'jupyter_neurodesk_version not found in neurodesktop.toml'
+      );
+    }
 
-      res.on('end', () => {
-        try {
-          fs.writeFileSync(path.join(__dirname, '../neurodesktop.toml'), body);
-
-          process.exit(0);
-        } catch (error) {
-          console.error(error.message);
-          process.exit(1);
-        }
-      });
-    })
-    .on('error', error => {
-      console.error(error.message);
-      process.exit(1);
-    });
+    fs.writeFileSync(
+      tomlPath,
+      toml.replace(versionLine, `jupyter_neurodesk_version = "${version}"`)
+    );
+    process.exit(0);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
 }
