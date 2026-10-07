@@ -1,0 +1,141 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommitsDisabled"
+  ],
+  "timezone": "Australia/Brisbane",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Workflow actions, grouped into one review (as in neurodesk.github.io).",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "Runner OS upgrades change the installers being built; approve deliberately.",
+      "matchDatasources": ["github-runners"],
+      "groupName": "github runner images",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "The org's reusable workflow intentionally follows main; do not pin it to a digest.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["NeuroDesk/neurodesk.github.io"],
+      "pinDigests": false
+    },
+    {
+      "description": "Node.js used to build the app: .nvmrc, engines and setup-node versions move as one review.",
+      "matchDepNames": ["node"],
+      "groupName": "node runtime"
+    },
+    {
+      "description": "Python for the workflow helper scripts.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["python"],
+      "groupName": "node runtime"
+    },
+    {
+      "description": "Major npm updates usually need code changes (Electron especially); approve them from the dashboard.",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "A Node.js major (.nvmrc, engines, setup-node) changes the build runtime; approve deliberately.",
+      "matchDepNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Electron and its packaging toolchain.",
+      "matchPackageNames": ["electron", "electron-builder", "@electron/**"],
+      "groupName": "electron"
+    },
+    {
+      "description": "Lint and format tooling.",
+      "matchPackageNames": [
+        "eslint",
+        "eslint-*",
+        "@typescript-eslint/**",
+        "prettier",
+        "stylelint",
+        "stylelint-*"
+      ],
+      "groupName": "lint and format tooling"
+    },
+    {
+      "description": "Test tooling.",
+      "matchPackageNames": ["jest", "ts-jest", "@types/jest"],
+      "groupName": "test tooling"
+    },
+    {
+      "description": "Bundling and compilation.",
+      "matchPackageNames": ["webpack", "webpack-cli", "typescript"],
+      "groupName": "build tooling"
+    },
+    {
+      "description": "Type definitions without a runtime counterpart in this file.",
+      "matchPackageNames": ["@types/**", "!@types/jest"],
+      "groupName": "type definitions"
+    },
+    {
+      "description": "User-facing Neurodesktop version (same rule as neurodesk.github.io).",
+      "matchDepNames": ["neurodesk/neurodesktop"],
+      "groupName": "neurodesktop release pins",
+      "separateMajorMinor": false,
+      "addLabels": ["enhancement"],
+      "prBodyNotes": [
+        "> [!WARNING]\n> This update changes the image every app user launches and requires manual testing before merging."
+      ]
+    },
+    {
+      "description": "TinyRange is the VM engine shipped inside the macOS/Windows installers.",
+      "matchDepNames": ["tinyrange/tinyrange"],
+      "dependencyDashboardApproval": true,
+      "addLabels": ["enhancement"],
+      "prBodyNotes": [
+        "> [!WARNING]\n> TinyRange is bundled in every installer. Confirm the release still ships tinyrange-{darwin-arm64,linux-amd64,linux-arm64,windows-amd64}.zip and run the e2e workflow on macOS before merging."
+      ]
+    },
+    {
+      "description": "Supply-chain guard: let new npm releases age three days before proposing them.",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "3 days"
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Default Neurodesktop image the app launches, tracked to stable GitHub releases exactly as neurodesk.github.io does (replaces the broken sync_release.yml lookup).",
+      "customType": "regex",
+      "managerFilePatterns": ["/^neurodesktop\\.toml$/"],
+      "matchStrings": [
+        "jupyter_neurodesk_version = \"(?<currentValue>\\d{4}-\\d{2}-\\d{2})\""
+      ],
+      "depNameTemplate": "neurodesk/neurodesktop",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})$"
+    },
+    {
+      "description": "TinyRange release bundled into every installer (publish.yml) and used by the e2e test.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^package\\.json$/"],
+      "matchStrings": [
+        "\"tinyrange_version\": \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "tinyrange/tinyrange",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>\\d+\\.\\d+\\.\\d+)$"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "labels": ["security"]
+  }
+}
