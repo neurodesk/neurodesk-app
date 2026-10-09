@@ -109,6 +109,10 @@ export class WelcomeView {
       this._isDarkTheme ? DarkThemeBGColor : LightThemeBGColor
     );
 
+    const neurodeskLogo = fs.readFileSync(
+      path.join(__dirname, '../../../app-assets/neurodesk.svg')
+    );
+
     // Load mini apps from container installer YAML files
     const dynamicMiniApps = loadMiniAppsFromContainerInstaller();
     const miniAppsJson = JSON.stringify(dynamicMiniApps, null, 2);
@@ -223,22 +227,46 @@ export class WelcomeView {
               color: #a0aec0;
           }
 
-            .launch-buttons {
-                display: flex;
-                gap: 12px;
-            }
+          .app-logo-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            column-gap: 10px;
+          }
+          
+          .app-logo {
+            font-size: 30px;
+          }
 
-            .launch-btn {
-                flex: 1;
-                padding: 12px 16px;
-                border: none;
-                border-radius: 4px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: all 0.2s ease;
-                font-size: 0.9rem;
-                position: relative;
-                overflow: hidden;
+          .neurodesk-logo svg {
+            width: 300px;
+          }
+
+          .app-ui-dark .neurodesk-logo {
+            width: 300px;
+            fill: #888888
+          }
+
+          .neurodesk-logo .jp-icon2 {
+            fill: #888888;
+          }
+
+          .launch-buttons {
+              display: flex;
+              gap: 12px;
+          }
+
+          .launch-btn {
+              flex: 1;
+              padding: 12px 16px;
+              border: none;
+              border-radius: 4px;
+              font-weight: 600;
+              cursor: pointer;
+              transition: all 0.2s ease;
+              font-size: 0.9rem;
+              position: relative;
+              overflow: hidden;
             }
 
             .launch-btn:disabled {
@@ -257,12 +285,12 @@ export class WelcomeView {
             }
 
             .local-btn {
-                background: #4299e1;
+                background: #6aa329;
                 color: white;
             }
 
             .local-btn:hover:not(:disabled) {
-                background: #3182ce;
+                background: #b7d886;
             }
 
             .launch-btn.loading {
@@ -304,12 +332,12 @@ export class WelcomeView {
                 cursor: pointer;
                 transition: all 0.2s ease;
                 font-size: 0.9rem;
-                background: #4299e1;
-                color: white;
+                background: #b7d886;
+                color: black;
             }
 
             .split-btn-main:hover {
-                background: #3182ce;
+                background: #6aa329;
                 color: white;
             }
 
@@ -321,12 +349,12 @@ export class WelcomeView {
                 font-size: 0.7rem;
                 cursor: pointer;
                 transition: all 0.2s ease;
-                background: #4299e1;
-                color: white;
+                background: #b7d886;
+                color: black;
             }
 
             .split-btn-arrow:hover {
-                background: #3182ce;
+                background: #6aa329;
                 color: white;
             }
 
@@ -509,6 +537,75 @@ export class WelcomeView {
             .app-ui-dark #notification-panel .close-button {
               fill: #bcbcbc;
             }
+            #survey-reminder {
+              position: fixed;
+              bottom: 24px;
+              right: 24px;
+              width: 280px;
+              background: white;
+              border-radius: 4px;
+              box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+              padding: 16px;
+              z-index: 1000;
+              display: none;
+            }
+            .app-ui-dark #survey-reminder {
+              background: #4f4f4f;
+              box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            }
+            #survey-reminder-header {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              margin-bottom: 8px;
+            }
+            #survey-reminder-title {
+              font-weight: 600;
+              font-size: 0.9rem;
+              color: #2d3748;
+            }
+            .app-ui-dark #survey-reminder-title {
+              color: #e2e8f0;
+            }
+            #survey-reminder-close {
+              cursor: pointer;
+              width: 16px;
+              height: 16px;
+              fill: #a0aec0;
+              flex-shrink: 0;
+              margin-left: 8px;
+              margin-top: 1px;
+            }
+            #survey-reminder-close:hover {
+              fill: #718096;
+            }
+            .app-ui-dark #survey-reminder-close:hover {
+              fill: #e2e8f0;
+            }
+            #survey-reminder-desc {
+              font-size: 0.82rem;
+              color: #718096;
+              margin-bottom: 12px;
+              line-height: 1.4;
+            }
+            .app-ui-dark #survey-reminder-desc {
+              color: #a0aec0;
+            }
+            #survey-reminder-btn {
+              display: inline-block;
+              padding: 8px 16px;
+              background: #b7d886;
+              color: black;
+              font-weight: 600;
+              font-size: 0.85rem;
+              border-radius: 4px;
+              cursor: pointer;
+              border: none;
+              transition: background 0.2s ease;
+            }
+            #survey-reminder-btn:hover {
+              background: #6aa329;
+            }
           </style>
           <script>
             document.addEventListener("DOMContentLoaded", () => {
@@ -531,10 +628,13 @@ export class WelcomeView {
           </defs>
           </svg>
           <div class="container">
-              <div class="header">
-                  <h1>Neurodesk Apps</h1>
-                  <p>Launch your applications locally or remotely</p>
+            <div class="row app-logo-row">
+              <div class="app-logo">
+                <div class="neurodesk-logo">
+                    ${neurodeskLogo}
+                </div>
               </div>
+            </div>
 
               <div class="search-container">
                   <input type="text" id="searchInput" placeholder="Search apps..." class="search-input">
@@ -553,6 +653,17 @@ export class WelcomeView {
                 <use href="#circle-xmark" />
               </svg>
             </div>
+          </div>
+
+          <div id="survey-reminder">
+            <div id="survey-reminder-header">
+              <span id="survey-reminder-title">Help us improve Neurodesk</span>
+              <svg id="survey-reminder-close" onclick="this.parentElement.parentElement.style.display = 'none';" viewBox="0 0 512 512" title="Dismiss">
+                <use href="#circle-xmark" />
+              </svg>
+            </div>
+            <p id="survey-reminder-desc">Share your feedback in a quick survey.</p>
+            <button id="survey-reminder-btn" onclick="openSurveyLink()">Take Survey</button>
           </div>
 
           <script>
@@ -803,6 +914,23 @@ export class WelcomeView {
           window.electronAPI.onSetNotificationMessage((message, closable) => {
             showNotificationPanel(message, closable);
           });
+
+          // Survey reminder: visible Oct 1 – Dec 1, 2026 (two-month window)
+          const SURVEY_URL = 'https://uniofqueensland.au1.qualtrics.com/jfe/form/SV_1MvJiHaCQZ4I0Tk';
+          const SURVEY_START = new Date('2026-10-01');
+          const SURVEY_END = new Date('2026-12-01');
+
+          function initSurveyReminder() {
+            const now = new Date();
+            if (now < SURVEY_START || now > SURVEY_END) return;
+            document.getElementById('survey-reminder').style.display = 'block';
+          }
+
+          function openSurveyLink() {
+            window.electronAPI.openNewsLink(SURVEY_URL);
+          }
+
+          document.addEventListener('DOMContentLoaded', initSurveyReminder);
 
           </script>
         </body>

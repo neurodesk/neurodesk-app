@@ -478,6 +478,10 @@ function createLaunchScript(
     imageVersion
   );
 
+  if (!parser.isValid) {
+    throw new Error(`Invalid container config: ${containerConfigName}`);
+  }
+
   const customStorageDirectory = userSettings.getValue(
     SettingType.neurodesktopStorageDirectory
   );
@@ -676,17 +680,21 @@ export class JupyterServer {
           return;
         }
 
-        const {
-          scriptPath: launchScriptPath,
-          containerName
-        } = createLaunchScript(
-          this._info,
-          this._info.engine,
-          this._info.port,
-          this._info.token,
-          this._info.containerConfigName,
-          this._info.imageVersion
-        );
+        let launchScriptPath: string;
+        let containerName: string;
+        try {
+          ({ scriptPath: launchScriptPath, containerName } = createLaunchScript(
+            this._info,
+            this._info.engine,
+            this._info.port,
+            this._info.token,
+            this._info.containerConfigName,
+            this._info.imageVersion
+          ));
+        } catch (error) {
+          reject(error);
+          return;
+        }
         this._info.containerName = containerName;
 
         const jlabWorkspacesDir = path.join(

@@ -1,7 +1,7 @@
 {
   "name": "neurodeskapp",
   "jlab_version": "4.0.0-1",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "tinyrange_version": "0.4.0",
   "description": "Neurodesk App",
   "main": "./build/out/main/main.js",
@@ -175,10 +175,10 @@
     "url": "https://neurodesk.org/"
   },
   "bugs": {
-    "url": "https://github.com/NeuroDesk/neurodesk-app/issues"
+    "url": "https://github.com/scigetorg/neurodesk-app/issues"
   },
-  "homepage": "https://github.com/NeuroDesk/neurodesk-app#readme",
-  "repository": "https://github.com/NeuroDesk/neurodesk-app",
+  "homepage": "https://github.com/scigetorg/neurodesk-app#readme",
+  "repository": "https://github.com/scigetorg/neurodesk-app",
   "license": "BSD-3-Clause",
   "engines": {
     "node": ">=22.12.0"

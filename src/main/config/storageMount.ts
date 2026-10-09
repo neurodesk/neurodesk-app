@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 
-const DEFAULT_CONTAINER_CONFIG = 'neuroimaging';
+const DEFAULT_CONTAINER_CONFIG = 'neurodesk';
 
 export function validateStorageMount(value: unknown): string {
   if (

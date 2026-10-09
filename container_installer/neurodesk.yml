@@ -1,7 +1,7 @@
-title: neuroimaging
+title: neurodesk
 defaultVersion: "2026-07-11"
 registry: docker.io/vnmd/neurodesktop
-releaseHistoryUrl: https://raw.githubusercontent.com/neurodesk/neurodesk.github.io-astro/refs/heads/main/src/content/docs/overview/release-history/index.mdx
+releaseHistoryUrl: https://raw.githubusercontent.com/neurodesk/neurodesk.github.io/refs/heads/main/src/content/docs/overview/release-history/index.mdx
 containerName: neurodeskapp
 volumeMount: neurodesk-home
 defaultStorageMount: neurodesktop-storage

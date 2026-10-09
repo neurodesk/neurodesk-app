@@ -100,6 +100,7 @@ export class ContainerConfigParser {
   private baseContainerConfig: BaseContainerConfig;
   private containerConfig: ContainerConfig;
   private version: string;
+  public isValid: boolean = true;
 
   constructor(
     baseContainerConfigPath?: string,
@@ -126,6 +127,7 @@ export class ContainerConfigParser {
       const config = yaml.load(configContent) as BaseContainerConfig;
       return config;
     } catch (error) {
+      this.isValid = false;
       throw new Error(`Failed to parse neurodesk.yml: ${error}`);
     }
   }
