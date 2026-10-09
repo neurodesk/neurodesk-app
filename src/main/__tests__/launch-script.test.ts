@@ -19,7 +19,7 @@ const baseConfigPath = path.join(
 );
 const containerConfigPath = path.join(
   __dirname,
-  '../../../container_installer/neuroimaging.yml'
+  '../../../container_installer/neurodesk.yml'
 );
 
 /**
@@ -56,7 +56,7 @@ function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
 
 function parserWithStorageMount(mountName: string): ContainerConfigParser {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurodesk-mount-'));
-  const tempConfigPath = path.join(tempDir, 'neuroimaging.yml');
+  const tempConfigPath = path.join(tempDir, 'neurodesk.yml');
   const config = fs
     .readFileSync(containerConfigPath, 'utf8')
     .replace(/^defaultStorageMount:.*$/m, `defaultStorageMount: ${mountName}`);

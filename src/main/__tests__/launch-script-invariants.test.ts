@@ -30,7 +30,7 @@ const baseConfigPath = path.join(
 );
 const containerConfigPath = path.join(
   __dirname,
-  '../../../container_installer/neuroimaging.yml'
+  '../../../container_installer/neurodesk.yml'
 );
 
 interface ITestOverrides extends Partial<Omit<ILaunchScriptParams, 'parser'>> {
