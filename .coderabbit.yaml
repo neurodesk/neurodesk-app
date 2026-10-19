@@ -1,0 +1,6 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+reviews:
+  # Do not post review status messages (e.g. skipped-review notices), which
+  # trigger notification emails. Automatic reviews stay enabled.
+  review_status: false
