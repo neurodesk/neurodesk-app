@@ -192,18 +192,23 @@ describe('launch script invariants', () => {
         expect(script).not.toContain('undefined');
         // TinyRange has no --name flag; only Docker/Podman name the container.
         if (engineType !== EngineType.TinyRange) {
-          expect(script).toContain('--name neurodeskapp');
+          expect(script).toContain(
+            `--name neurodeskapp-${
+              process.getuid?.() ?? os.userInfo().username
+            }`
+          );
         }
       }
     });
 
     it('names the container consistently across --name and the lifecycle commands', () => {
-      // --name comes from the config, the rm/logs commands from the same
-      // parser — they must never drift apart.
+      const name = `neurodeskapp-${
+        process.getuid?.() ?? os.userInfo().username
+      }`;
       for (const engineType of [EngineType.Docker, EngineType.Podman]) {
         const script = generateLaunchScript(baseParams({ engineType }));
-        expect(script).toContain('--name neurodeskapp');
-        expect(script).toContain(`${engineType} logs -f neurodeskapp`);
+        expect(script).toContain(`--name ${name}`);
+        expect(script).toContain(`${engineType} logs -f ${name}`);
       }
     });
 

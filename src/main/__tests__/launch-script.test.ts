@@ -137,18 +137,22 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('--shm-size=1gb');
     });
 
-    it('uses provided containerName', () => {
+    it('uses a resolved user-scoped container name throughout the script', () => {
       const script = generateLaunchScript(
-        baseParams({ port: 9999, containerName: 'neurodeskapp' })
+        baseParams({ port: 9999, containerName: 'neurodeskapp-4444444' })
       );
-      expect(script).toContain('--name neurodeskapp');
+      expect(script).toContain('--name neurodeskapp-4444444');
+      expect(script).toContain('docker rm -f neurodeskapp-4444444');
+      expect(script).toContain('docker logs -f neurodeskapp-4444444');
     });
 
-    it('falls back to base name when containerName not provided', () => {
+    it('uses the current user ID when containerName is not provided', () => {
       const script = generateLaunchScript(
         baseParams({ port: 9999, containerName: undefined })
       );
-      expect(script).toContain('--name neurodeskapp');
+      expect(script).toContain(
+        `--name neurodeskapp-${process.getuid?.() ?? os.userInfo().username}`
+      );
       expect(script).not.toContain('--name neurodeskapp-9999');
     });
 
