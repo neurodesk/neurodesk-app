@@ -8,7 +8,7 @@ import * as path from 'path';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { IDisposable } from './tokens';
-import { getFreePort, getUserDataDir, waitForDuration } from './utils';
+import { getFreePort, getUserDataDir } from './utils';
 
 export const SERVER_TOKEN_PREFIX = 'jlab:srvr:';
 import {
@@ -897,12 +897,26 @@ export class JupyterServer {
 
     this._stopServer = new Promise<void>((resolve, reject) => {
       if (this._nbServer !== undefined) {
+        const removeContainer = (shell: string) => {
+          // Removing the container also stops Jupyter. An HTTP shutdown request
+          // here races with rm -f and can fail with "socket hang up".
+          execFile(
+            `${this._info.engine} rm -f ${this._info.containerName}`,
+            { shell, timeout: 10000 },
+            (error, _stdout, stderr) => {
+              if (
+                error &&
+                !/no such container|no container with name or ID/i.test(stderr)
+              ) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            }
+          );
+        };
         if (process.platform === 'win32') {
-          if (this._info.engine !== EngineType.TinyRange) {
-            execFile(`${this._info.engine} rm -f ${this._info.containerName}`, {
-              shell: 'cmd.exe'
-            });
-          } else {
+          if (this._info.engine === EngineType.TinyRange) {
             execFile('taskkill', ['/IM', 'tinyrange.exe', '/T', '/F'], {
               shell: 'cmd.exe'
             });
@@ -922,15 +936,9 @@ export class JupyterServer {
             }
           );
           if (this._info.engine === EngineType.TinyRange) {
-            this._stopping = false;
             resolve();
           } else {
-            this._shutdownServer()
-              .then(() => {
-                this._stopping = false;
-                resolve();
-              })
-              .catch(reject);
+            removeContainer('cmd.exe');
           }
         } else {
           if (this._info.engine === EngineType.TinyRange) {
@@ -939,26 +947,15 @@ export class JupyterServer {
               `killall tinyrange 2>/dev/null; killall tinyrange_qemu 2>/dev/null; killall qemu-system-x86_64 2>/dev/null; killall qemu-system-aarch64 2>/dev/null`,
               { shell: '/bin/bash' }
             );
-          } else {
-            execFile(`${this._info.engine} rm -f ${this._info.containerName}`, {
-              shell: '/bin/bash'
-            });
           }
           this._nbServer.kill();
           if (this._info.engine === EngineType.TinyRange) {
-            this._stopping = false;
             resolve();
           } else {
-            this._shutdownServer()
-              .then(() => {
-                this._stopping = false;
-                resolve();
-              })
-              .catch(reject);
+            removeContainer('/bin/bash');
           }
         }
       } else {
-        this._stopping = false;
         resolve();
       }
     });
@@ -1013,69 +1010,6 @@ export class JupyterServer {
     this._nbServer.removeAllListeners();
     this._nbServer.stderr?.removeAllListeners();
     this._nbServer.stdout?.removeAllListeners();
-  }
-
-  private _callShutdownAPI(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const req = httpRequest(
-        `${this._info.url.origin}/api/shutdown?_xsrf=${this._info.token}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `token ${this._info.token}`
-          }
-        },
-        r => {
-          if (r.statusCode == 200) {
-            resolve();
-          } else {
-            reject(`Server failed to shutdown. Response code: ${r.statusCode}`);
-          }
-        }
-      );
-      req.on('error', err => {
-        reject(err);
-      });
-      req.end();
-    });
-  }
-
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore kept as dead code for potential future reuse
-  private _shutdownServer(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      this._callShutdownAPI()
-        .then(() => {
-          resolve();
-        })
-        .catch(error => {
-          // if no connection, it is possible that server was not up yet
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          if (error.code === 'ECONNREFUSED') {
-            log.info(
-              'Server not up yet, waiting for it to start...',
-              error.code
-            );
-            Promise.race([
-              waitUntilServerIsUp(this._info.url),
-              waitForDuration(SERVER_LAUNCH_TIMEOUT)
-            ]).then((up: boolean) => {
-              if (up) {
-                this._callShutdownAPI()
-                  .then(() => {
-                    resolve();
-                  })
-                  .catch(reject);
-              } else {
-                reject();
-              }
-            });
-          } else {
-            reject(error);
-          }
-        });
-    });
   }
 
   private _generateToken() {

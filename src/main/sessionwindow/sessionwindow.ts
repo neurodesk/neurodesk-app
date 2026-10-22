@@ -9,6 +9,7 @@ import {
   shell,
   WebContentsView
 } from 'electron';
+import log from 'electron-log';
 import { WelcomeView } from '../welcomeview/welcomeview';
 import { LabView } from '../labview/labview';
 import {
@@ -222,14 +223,17 @@ export class SessionWindow implements IDisposable {
         return;
       }
 
-      await this._server.server.stop();
-      this._server = null;
-      if (this._labView) {
-        if (!this._window.isDestroyed()) {
-          this._window.contentView.removeChildView(this._labView.view);
+      try {
+        await this._server.server.stop();
+      } finally {
+        this._server = null;
+        if (this._labView) {
+          if (!this._window.isDestroyed()) {
+            this._window.contentView.removeChildView(this._labView.view);
+          }
+          this._labView.dispose();
+          this._labView = null;
         }
-        this._labView.dispose();
-        this._labView = null;
       }
     }
   }
@@ -239,26 +243,21 @@ export class SessionWindow implements IDisposable {
       return this._disposePromise;
     }
 
-    this._disposePromise = new Promise<void>(resolve => {
-      this._evm.dispose();
-
-      this._disposeSession().then(() => {
-        // _disposeSession only closes the labView. The persistent titlebar and
-        // progress views (and a still-mounted welcome view) keep their
-        // renderers alive on window close (electron/electron#42884), so close
-        // each one that is still alive.
-        const closeIfAlive = (wc?: Electron.WebContents) => {
-          if (wc && !wc.isDestroyed()) {
-            wc.close();
-          }
-        };
-        closeIfAlive(this._titleBarView?.view?.webContents);
-        closeIfAlive(this._progressView?.view?.view?.webContents);
-        closeIfAlive(this._welcomeView?.view?.webContents);
-
-        this._disposePromise = null;
-        resolve();
-      });
+    this._evm.dispose();
+    this._disposePromise = this._disposeSession().finally(() => {
+      // _disposeSession only closes the labView. The persistent titlebar and
+      // progress views (and a still-mounted welcome view) keep their
+      // renderers alive on window close (electron/electron#42884), so close
+      // each one that is still alive.
+      const closeIfAlive = (wc?: Electron.WebContents) => {
+        if (wc && !wc.isDestroyed()) {
+          wc.close();
+        }
+      };
+      closeIfAlive(this._titleBarView?.view?.webContents);
+      closeIfAlive(this._progressView?.view?.view?.webContents);
+      closeIfAlive(this._welcomeView?.view?.webContents);
+      this._disposePromise = null;
     });
 
     return this._disposePromise;
@@ -409,8 +408,10 @@ export class SessionWindow implements IDisposable {
   }
 
   private _registerListeners() {
-    this._window.on('close', async () => {
-      await this.dispose();
+    this._window.on('close', () => {
+      void this.dispose().catch(error => {
+        log.error('Failed to dispose session window:', error);
+      });
     });
 
     this._evm.registerEventHandler(

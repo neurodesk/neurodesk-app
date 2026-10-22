@@ -175,17 +175,22 @@ class SessionWindowManager implements IDisposable {
 
     window.sessionConfigChanged.connect(this.syncSessionData, this);
 
-    window.window.on('close', async event => {
+    window.window.on('close', async () => {
       const index = this._windows.indexOf(window);
       if (index !== -1) {
         window.sessionConfigChanged.disconnect(this.syncSessionData, this);
-        await window.dispose();
-        this._windows.splice(index, 1);
-        this.syncSessionData();
+        try {
+          await window.dispose();
+        } catch (error) {
+          log.error('Failed to dispose session window:', error);
+        } finally {
+          this._windows.splice(index, 1);
+          this.syncSessionData();
 
-        if (this._windows.length === 0) {
-          this._options.app.closeSettingsDialog();
-          this._options.app.closeAboutDialog();
+          if (this._windows.length === 0) {
+            this._options.app.closeSettingsDialog();
+            this._options.app.closeAboutDialog();
+          }
         }
       }
     });
