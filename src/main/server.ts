@@ -203,8 +203,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   // host each get their own /home/jovyan and do not fight over Jupyter's
   // SQLite databases or startup files.
   const volumeMount =
-    resolvedVolumeName ||
-    getUserScopedContainerName(parser.getVolumeMount());
+    resolvedVolumeName || getUserScopedContainerName(parser.getVolumeMount());
 
   // Keep path separators forward-slashed so the generated script is identical
   // no matter which OS generates it (the Windows tests run on Linux).

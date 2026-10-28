@@ -174,7 +174,9 @@ describe('generateLaunchScript', () => {
       const script = generateLaunchScript(
         baseParams({ volumeName: 'neurodesk-home-1234' })
       );
-      expect(script).toContain('source=neurodesk-home-1234,target=/home/jovyan');
+      expect(script).toContain(
+        'source=neurodesk-home-1234,target=/home/jovyan'
+      );
     });
 
     it('includes port mapping', () => {
