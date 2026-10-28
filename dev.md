@@ -83,4 +83,4 @@ Some website to handle the conversion:
 
 ## Container naming decision
 
-When spinning up a neurodesktop container, we name it `neurodeskapp-${strPort}` to avoid conflict with `neurodesktop` as in the website's instruction to run container and in case the app crashes and fails to remove the container correctly. However, a user reported issue losing their chat to Cursor IDE upon new launch because the container is renamed when it restarts. To keep it convenient for AI chat to be connected, we now set it consistently as `neurodeskapp` as users cannot create multiple instances.
+Neurodesk App names each container `neurodeskapp-<host UID>` on Unix, for example `neurodeskapp-4444444`. Windows uses the account name because Node does not expose a numeric UID there. The name stays stable across restarts so external tools can reconnect, while users on a shared host have distinct container names.

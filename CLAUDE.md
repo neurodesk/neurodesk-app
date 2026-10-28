@@ -81,7 +81,7 @@ Three backend engines managed in `server.ts`:
 - **Podman** (Linux alternative)
 - **TinyRange** (lightweight QEMU-based VM, cross-platform)
 
-Container naming: `neurodeskapp-<port>` for auto-started containers.
+Container naming: `neurodeskapp-<host UID>` on Unix, or the account name on Windows.
 
 ### Configuration Files
 

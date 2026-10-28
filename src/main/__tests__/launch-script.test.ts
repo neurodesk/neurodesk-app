@@ -50,6 +50,9 @@ function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
     additionalDirectory: '',
     isNfsAdditionalDirectory: false,
     overrideDefaultServerArgs: false,
+    // Pin volumeName so tests are deterministic regardless of the test runner's
+    // UID.  The per-user default is exercised in its own test below.
+    volumeName: 'neurodesk-home',
     ...rest
   };
 }
@@ -154,6 +157,24 @@ describe('generateLaunchScript', () => {
         `--name neurodeskapp-${process.getuid?.() ?? os.userInfo().username}`
       );
       expect(script).not.toContain('--name neurodeskapp-9999');
+    });
+
+    it('scopes the home volume to the current user when volumeName is not provided', () => {
+      const uid = process.getuid?.() ?? os.userInfo().username;
+      const script = generateLaunchScript(
+        baseParams({ volumeName: undefined })
+      );
+      expect(script).toContain(`neurodesk-home-${uid}`);
+      // The unscoped volume must not appear as the container's home mount
+      expect(script).not.toContain('source=neurodesk-home,target=/home/jovyan');
+      expect(script).not.toContain('-v neurodesk-home:/home/jovyan');
+    });
+
+    it('uses an explicit volumeName when provided', () => {
+      const script = generateLaunchScript(
+        baseParams({ volumeName: 'neurodesk-home-1234' })
+      );
+      expect(script).toContain('source=neurodesk-home-1234,target=/home/jovyan');
     });
 
     it('includes port mapping', () => {
@@ -897,6 +918,53 @@ describe('generateLaunchScript', () => {
         baseParams({ engineType: EngineType.TinyRange })
       );
       expect(script).not.toContain('--entrypoint chown');
+    });
+  });
+
+  // ── Legacy volume migration ──
+  //
+  // When volumeName differs from parser.getVolumeMount() (i.e. it has been
+  // scoped to the user), the launch script must include a one-time migration
+  // that copies data from the old unscoped volume to the new per-user one.
+
+  describe('legacy volume migration', () => {
+    it('emits a migration block when volumeName differs from the raw volume mount', () => {
+      const script = generateLaunchScript(
+        baseParams({ volumeName: 'neurodesk-home-1000' })
+      );
+      expect(script).toContain('neurodesk-home-1000');
+      // Should check the old volume exists and the new one does not before copying
+      expect(script).toContain('docker volume inspect neurodesk-home');
+      expect(script).toContain('docker volume inspect neurodesk-home-1000');
+      expect(script).toContain(
+        '-v neurodesk-home:/from -v neurodesk-home-1000:/to alpine'
+      );
+    });
+
+    it('does not emit a migration block when volumeName matches the raw volume mount', () => {
+      // baseParams() pins volumeName: 'neurodesk-home' which equals parser.getVolumeMount()
+      const script = generateLaunchScript(baseParams());
+      expect(script).not.toContain('/from');
+      expect(script).not.toContain('/to');
+    });
+
+    it('migration runs before the container launch', () => {
+      const script = generateLaunchScript(
+        baseParams({ volumeName: 'neurodesk-home-1000' })
+      );
+      expect(script.indexOf('neurodesk-home:/from')).toBeLessThan(
+        script.indexOf('CONTAINER_ID=')
+      );
+    });
+
+    it('is skipped for TinyRange', () => {
+      const script = generateLaunchScript(
+        baseParams({
+          engineType: EngineType.TinyRange,
+          volumeName: 'neurodesk-home-1000'
+        })
+      );
+      expect(script).not.toContain('/from');
     });
   });
 });

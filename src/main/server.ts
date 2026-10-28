@@ -108,6 +108,8 @@ export interface ILaunchScriptParams {
   tinyrangePath: string;
   /** Name already scoped to the host user, when resolved by createLaunchScript. */
   containerName?: string;
+  /** Home volume name already scoped to the host user, when resolved by createLaunchScript. */
+  volumeName?: string;
   /** Host directory mounted at the configured storage mount. */
   storageDirectory?: string;
   /** Host directory mounted at /data, if the user configured one. */
@@ -177,6 +179,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     osVersion,
     tinyrangePath,
     containerName: resolvedContainerName,
+    volumeName: resolvedVolumeName,
     storageDirectory,
     additionalDirectory = '',
     isNfsAdditionalDirectory = false,
@@ -191,12 +194,17 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const strPort = port.toString();
 
   const imageName = parser.getImageName();
-  const volumeMount = parser.getVolumeMount();
   const storageMount = parser.getDefaultStorageMount();
   // Use the same name in --name and every lifecycle command.
   const containerName =
     resolvedContainerName ||
     getUserScopedContainerName(parser.getContainerName());
+  // Scope the home volume to the host user so concurrent users on the same
+  // host each get their own /home/jovyan and do not fight over Jupyter's
+  // SQLite databases or startup files.
+  const volumeMount =
+    resolvedVolumeName ||
+    getUserScopedContainerName(parser.getVolumeMount());
 
   // Keep path separators forward-slashed so the generated script is identical
   // no matter which OS generates it (the Windows tests run on Linux).
@@ -241,6 +249,31 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     ? `${engineType} volume inspect ${volumeMount} >NUL 2>&1 || ${engineType} volume create ${volumeMount}`
     : `${engineType} volume exists ${volumeMount} &> /dev/null || ${engineType} volume create ${volumeMount}`;
   const volumeCreate = isPodman ? volumeCheck : '';
+
+  // One-time migration: if a previous (unscoped) home volume exists and the
+  // new per-user volume does not yet exist, copy the data across so users do
+  // not lose their /home/jovyan content after upgrading.
+  const legacyVolumeName = parser.getVolumeMount(); // e.g. "neurodesk-home"
+  const needsMigration = !isTinyRange && legacyVolumeName !== volumeMount;
+  const migrationCmd = needsMigration
+    ? isWin
+      ? `
+        ${engineType} volume inspect ${legacyVolumeName} >NUL 2>&1
+        if %ERRORLEVEL% equ 0 (
+          ${engineType} volume inspect ${volumeMount} >NUL 2>&1
+          if %ERRORLEVEL% neq 0 (
+            echo [neurodesk-app] Migrating home volume ${legacyVolumeName} to ${volumeMount}
+            ${engineType} volume create ${volumeMount} >NUL
+            ${engineType} run --rm -v ${legacyVolumeName}:/from -v ${volumeMount}:/to alpine sh -c "cp -a /from/. /to/ && echo [neurodesk-app] Migration complete"
+          )
+        )`
+      : `
+        if ${engineType} volume inspect ${legacyVolumeName} &>/dev/null && ! ${engineType} volume inspect ${volumeMount} &>/dev/null; then
+          echo "[neurodesk-app] Migrating home volume ${legacyVolumeName} → ${volumeMount}"
+          ${engineType} volume create ${volumeMount} &>/dev/null
+          ${engineType} run --rm -v ${legacyVolumeName}:/from -v ${volumeMount}:/to alpine sh -c "cp -a /from/. /to/ && echo '[neurodesk-app] Migration complete'"
+        fi`
+    : '';
 
   // Fix ownership of /home/jovyan on the persistent volume before launching.
   // The volume may have .cache or other dirs owned by root from a previous run
@@ -324,6 +357,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
               echo "${engineType} command not found, running ${launchCmd}"
               ${launchCmd}
           )
+        ${migrationCmd}
         FOR /F "usebackq delims=" %%i IN (\`${engineType} image inspect ${imageName} --format="exists" 2^>nul\`) DO SET IMAGE_EXISTS=%%i
         ${fixPermissionsCmd}
         if "%IMAGE_EXISTS%"=="exists" (
@@ -359,6 +393,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
         echo "[neurodesk-app] NFS additional directory: ${isNfsAdditionalDirectory}"
         echo "[neurodesk-app] Container name: ${containerName}"
         echo "[neurodesk-app] Port: ${strPort}"
+        ${migrationCmd}
         ${
           additionalDir
             ? `echo "[neurodesk-app] Additional dir mount info: $(mount | grep '${additionalDir
@@ -543,6 +578,7 @@ function createLaunchScript(
     engineType,
     parser.getContainerName()
   );
+  const volumeName = getUserScopedContainerName(parser.getVolumeMount() ?? '');
 
   log.info(
     `Server launch: port=${port} engine=${engineType} container=${containerName} image=${parser.getImageName()}`
@@ -561,6 +597,7 @@ function createLaunchScript(
     osVersion: getHostOsVersion(),
     tinyrangePath: resolveTinyrangePath(isWin),
     containerName,
+    volumeName,
     storageDirectory,
     additionalDirectory,
     isNfsAdditionalDirectory,
