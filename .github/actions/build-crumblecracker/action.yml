@@ -1,0 +1,29 @@
+name: Build pinned CrumbleCracker backend
+description: Build native product sources, never substitute a published runtime binary.
+inputs:
+  arch:
+    description: Native Electron architecture (x64 or arm64)
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: tinyrange/crumblecracker
+        ref: 5201082ea65fc71920869c9a1c2e680ce9896e83
+        path: .backend-source
+        persist-credentials: false
+    - uses: actions/setup-go@v6
+      with:
+        go-version-file: .backend-source/go.mod
+        cache-dependency-path: .backend-source/go.sum
+    - name: Build matching native binary and embedded guest payload
+      shell: bash
+      env:
+        TARGET_ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+        actual=$(node -p process.arch)
+        test "$actual" = "$TARGET_ARCH"
+        cd .backend-source
+        go run tools/build.go -out "../crumblecracker/$TARGET_ARCH"

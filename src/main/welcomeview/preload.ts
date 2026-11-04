@@ -2,10 +2,6 @@ import { EventTypeMain, EventTypeRenderer } from '../eventtypes';
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-type SetRecentSessionListListener = (
-  recentSessions: any[],
-  recentCollapseState: boolean
-) => void;
 type SetNewsListListener = (list: any[]) => void;
 type SetNotificationMessageListener = (
   message: string,
@@ -13,7 +9,6 @@ type SetNotificationMessageListener = (
 ) => void;
 type DisableLocalServerActionsListener = () => void;
 
-let onSetRecentSessionListListener: SetRecentSessionListListener;
 let onSetNewsListListener: SetNewsListListener;
 let onSetNotificationMessageListener: SetNotificationMessageListener;
 let onDisableLocalServerActionsListener: DisableLocalServerActionsListener;
@@ -27,11 +22,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isDarkTheme: () => {
     return ipcRenderer.invoke(EventTypeMain.IsDarkTheme);
   },
+  fetchReleases: (
+    releaseHistoryUrl: string,
+    defaultVersion: string
+  ): Promise<string[]> => {
+    return ipcRenderer.invoke(
+      EventTypeMain.FetchReleases,
+      releaseHistoryUrl,
+      defaultVersion
+    );
+  },
   newSession: (
-    type: 'notebook' | 'blank' | 'open' | 'open-file' | 'open-folder' | 'remote'
+    type:
+      | 'notebook'
+      | 'blank'
+      | 'open'
+      | 'open-file'
+      | 'open-folder'
+      | 'remote',
+    containerConfigName?: string,
+    remoteUrl?: string[],
+    imageVersion?: string,
+    miniAppId?: string
   ) => {
     if (type === 'notebook' || type === 'blank') {
-      ipcRenderer.send(EventTypeMain.CreateNewSession, type);
+      ipcRenderer.send(
+        EventTypeMain.CreateNewSession,
+        type,
+        containerConfigName,
+        imageVersion,
+        miniAppId
+      );
     } else if (type === 'open') {
       ipcRenderer.send(EventTypeMain.OpenFileOrFolder);
     } else if (type === 'open-file') {
@@ -39,14 +60,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     } else if (type === 'open-folder') {
       ipcRenderer.send(EventTypeMain.OpenFolder);
     } else if (type === 'remote') {
-      ipcRenderer.send(EventTypeMain.CreateNewRemoteSession);
+      ipcRenderer.send(
+        EventTypeMain.CreateNewRemoteSession,
+        remoteUrl,
+        miniAppId
+      );
     }
-  },
-  openRecentSession(sessionIndex: number) {
-    ipcRenderer.send(EventTypeMain.OpenRecentSession, sessionIndex);
-  },
-  deleteRecentSession(sessionIndex: number) {
-    ipcRenderer.send(EventTypeMain.DeleteRecentSession, sessionIndex);
   },
   openDroppedFiles(files: string[]) {
     ipcRenderer.send(EventTypeMain.OpenDroppedFiles, files);
@@ -56,9 +75,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   sendMessageToMain: (message: string, ...args: any[]) => {
     ipcRenderer.send(message, ...args);
-  },
-  onSetRecentSessionList: (callback: SetRecentSessionListListener) => {
-    onSetRecentSessionListListener = callback;
   },
   onSetNewsList: (callback: SetNewsListListener) => {
     onSetNewsListListener = callback;
@@ -72,15 +88,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onDisableLocalServerActionsListener = callback;
   }
 });
-
-ipcRenderer.on(
-  EventTypeRenderer.SetRecentSessionList,
-  (event, recentSessions, recentCollapseState) => {
-    if (onSetRecentSessionListListener) {
-      onSetRecentSessionListListener(recentSessions, recentCollapseState);
-    }
-  }
-);
 
 ipcRenderer.on(EventTypeRenderer.SetNewsList, (event, list) => {
   if (onSetNewsListListener) {

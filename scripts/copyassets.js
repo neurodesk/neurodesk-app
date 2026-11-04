@@ -5,6 +5,7 @@ const watch = require('node-watch');
 const platform = process.platform;
 const buildDir = path.resolve('./build');
 const srcDir = path.resolve('./src');
+const containerConfigDir = path.resolve('./container_installer');
 
 function walkSync(currentDirPath, callback) {
   fs.readdirSync(currentDirPath).forEach(name => {
@@ -60,8 +61,37 @@ function copyAssests() {
     path.join(srcDir, 'assets', 'neurodesk.svg'),
     path.join(dest, '../app-assets', 'neurodesk.svg')
   );
-  fs.copySync('neurodesktop.toml', path.join(dest, 'neurodesktop.toml'));
+  fs.copySync(
+    path.join(srcDir, 'assets', 'sciget-icon.svg'),
+    path.join(dest, '../app-assets', 'sciget-icon.svg')
+  );
+  fs.copySync(
+    'src/main/config/baseContainerConfig.yml',
+    path.join(dest, 'main/config/baseContainerConfig.yml')
+  );
+  // Copy yml files from container_installer directory into build directory
+  if (fs.existsSync(containerConfigDir)) {
+    walkSync(containerConfigDir, srcPath => {
+      const destPath = srcPath.replace(
+        containerConfigDir,
+        path.join(dest, 'container_installer')
+      );
+      if (srcPath.endsWith('.yml')) {
+        fs.copySync(srcPath, destPath);
+      }
+    });
+  }
   fs.copySync('package.json', path.join(dest, 'package.json'));
+
+  // The installed app does not inherit the CI runner's environment.
+  // The PostHog project token is a client-side identifier, not a personal API key.
+  fs.writeFileSync(
+    path.join(dest, 'main', 'telemetry-config.json'),
+    JSON.stringify({
+      apiKey: process.env.POSTHOG_API_KEY || '',
+      host: process.env.POSTHOG_HOST || ''
+    })
+  );
 
   const toolkitPath = path.join(
     '../node_modules',

@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   launchInstallerDownloadPage: () => {
     ipcRenderer.send(EventTypeMain.LaunchInstallerDownloadPage);
   },
+  setGPUAcceleration: (enabled: boolean) => {
+    ipcRenderer.send(EventTypeMain.SetGPUAcceleration, enabled);
+  },
   setEngineType: (mode: string) => {
     ipcRenderer.send(EventTypeMain.SetEngineType, mode);
   },
@@ -92,6 +95,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   setStorageDirectory: (path: string) => {
     ipcRenderer.send(EventTypeMain.SetStorageDirectory, path);
+  },
+  setTelemetryConsent: (consent: string) => {
+    ipcRenderer.send(EventTypeMain.SetTelemetryConsent, consent);
   }
 });
 

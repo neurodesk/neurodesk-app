@@ -27,6 +27,7 @@ import {
   resolveWorkingDirectory,
   SettingType,
   StartupMode,
+  TelemetryConsent,
   userSettings
 } from './config/settings';
 import {
@@ -43,6 +44,12 @@ import { SettingsDialog } from './settingsdialog/settingsdialog';
 import { AboutDialog } from './aboutdialog/aboutdialog';
 import { AuthDialog } from './authdialog/authdialog';
 import * as path from 'path';
+import { ConsentDialog } from './consentdialog/consentdialog';
+import { closeTelemetry, initTelemetry } from './telemetry';
+import {
+  getDefaultStorageDirectory,
+  readDefaultStorageMount
+} from './config/storageMount';
 
 const release = require(path.join(__dirname, '..', 'package.json')).version;
 
@@ -58,7 +65,6 @@ export interface IApplication {
 interface IClearHistoryOptions {
   sessionData: boolean;
   recentRemoteURLs: boolean;
-  recentSessions: boolean;
 }
 
 const minimumWindowSpacing = 15;
@@ -235,9 +241,11 @@ export function getNeurodesktopStoragePath(): string {
   if (custom) {
     return custom;
   }
-  return process.platform === 'win32'
-    ? 'C:/neurodesktop-storage'
-    : path.join(app.getPath('home'), 'neurodesktop-storage');
+  return getDefaultStorageDirectory(
+    process.platform,
+    readDefaultStorageMount(),
+    app.getPath('home')
+  );
 }
 
 function createNeurodesktopStorage() {
@@ -291,6 +299,9 @@ export class JupyterApplication implements IApplication, IDisposable {
     }
 
     this._isDarkTheme = isDarkTheme(userSettings.getValue(SettingType.theme));
+
+    initTelemetry();
+    this._showConsentDialogIfNeeded();
 
     this.startup();
   }
@@ -376,6 +387,7 @@ export class JupyterApplication implements IApplication, IDisposable {
     const dialog = new SettingsDialog({
       isDarkTheme: this._isDarkTheme,
       engineType: settings.getValue(SettingType.engineType),
+      gpuAcceleration: settings.getValue(SettingType.gpuAcceleration),
       startupMode: settings.getValue(SettingType.startupMode),
       cvmfsMode: settings.getValue(SettingType.cvmfsMode),
       theme: settings.getValue(SettingType.theme),
@@ -402,7 +414,8 @@ export class JupyterApplication implements IApplication, IDisposable {
       //   SettingType.overrideDefaultServerArgs
       // ),
       serverEnvVars: userSettings.getValue(SettingType.serverEnvVars),
-      ctrlWBehavior: userSettings.getValue(SettingType.ctrlWBehavior)
+      ctrlWBehavior: userSettings.getValue(SettingType.ctrlWBehavior),
+      telemetryConsent: userSettings.getValue(SettingType.telemetryConsent)
     });
 
     this._settingsDialog = dialog;
@@ -703,6 +716,14 @@ export class JupyterApplication implements IApplication, IDisposable {
     );
 
     this._evm.registerEventHandler(
+      EventTypeMain.SetGPUAcceleration,
+      (_event, enabled) => {
+        if (typeof enabled === 'boolean') {
+          userSettings.setValue(SettingType.gpuAcceleration, enabled);
+        }
+      }
+    );
+    this._evm.registerEventHandler(
       EventTypeMain.SetEngineType,
       (_event, mode) => {
         userSettings.setValue(SettingType.engineType, mode);
@@ -791,6 +812,17 @@ export class JupyterApplication implements IApplication, IDisposable {
       }
     );
 
+    this._evm.registerEventHandler(
+      EventTypeMain.SetTelemetryConsent,
+      (_event, consent: TelemetryConsent) => {
+        userSettings.setValue(SettingType.telemetryConsent, consent);
+        userSettings.save();
+        if (consent === TelemetryConsent.On) {
+          initTelemetry();
+        }
+      }
+    );
+
     this._evm.registerSyncEventHandler(
       EventTypeMain.GetServerInfo,
       (event): Promise<IServerInfo> => {
@@ -810,28 +842,28 @@ export class JupyterApplication implements IApplication, IDisposable {
     });
 
     this._evm.registerSyncEventHandler(
+      EventTypeMain.FetchReleases,
+      async (event, releaseHistoryUrl: string, defaultVersion: string) => {
+        const { fetchReleases } = await import('./releases/releaseFetcher');
+        return fetchReleases(releaseHistoryUrl, defaultVersion);
+      }
+    );
+
+    this._evm.registerSyncEventHandler(
       EventTypeMain.ClearHistory,
       async (event, options: IClearHistoryOptions) => {
         if (options.recentRemoteURLs) {
           appData.recentRemoteURLs = [];
         }
-        if (options.sessionData || options.recentSessions) {
-          appData.recentSessions.forEach(async recentSession => {
-            if (
-              recentSession.partition &&
-              recentSession.partition.startsWith('persist:')
-            ) {
-              const s = session.fromPartition(recentSession.partition);
-              try {
-                await clearSession(s);
-              } catch (error) {
-                //
-              }
-            }
-          });
-        }
-
         if (options.sessionData) {
+          for (const partition of appData.persistentRemotePartitions) {
+            try {
+              await clearSession(session.fromPartition(partition));
+            } catch (error) {
+              //
+            }
+          }
+          appData.persistentRemotePartitions = [];
           try {
             await clearSession(session.defaultSession);
           } catch (error) {
@@ -839,14 +871,7 @@ export class JupyterApplication implements IApplication, IDisposable {
           }
         }
 
-        if (options.recentSessions) {
-          appData.recentSessions = [];
-
-          this._sessionWindowManager.windows.forEach(sessionWindow => {
-            sessionWindow.updateRecentSessionList(true);
-          });
-        }
-
+        appData.save();
         return true;
       }
     );
@@ -900,6 +925,48 @@ export class JupyterApplication implements IApplication, IDisposable {
       });
   }
 
+  private _showConsentDialogIfNeeded(): void {
+    const consent = userSettings.getValue(
+      SettingType.telemetryConsent
+    ) as TelemetryConsent;
+
+    if (consent !== TelemetryConsent.Unset) {
+      return;
+    }
+
+    // Show consent dialog after a short delay to let the main window load
+    setTimeout(() => {
+      const dialog = new ConsentDialog({
+        isDarkTheme: this._isDarkTheme,
+        onResult: () => {
+          // Re-init telemetry if user accepted
+          const newConsent = userSettings.getValue(
+            SettingType.telemetryConsent
+          ) as TelemetryConsent;
+          if (newConsent === TelemetryConsent.On) {
+            initTelemetry();
+          }
+        }
+      });
+
+      dialog.window.on('closed', () => {
+        // If user closed without choosing, treat as declined
+        const currentConsent = userSettings.getValue(
+          SettingType.telemetryConsent
+        ) as TelemetryConsent;
+        if (currentConsent === TelemetryConsent.Unset) {
+          userSettings.setValue(
+            SettingType.telemetryConsent,
+            TelemetryConsent.Off
+          );
+          userSettings.save();
+        }
+      });
+
+      dialog.load();
+    }, 3000);
+  }
+
   private _quit(): void {
     const forceExit = setTimeout(() => {
       log.warn('Shutdown timed out after 15s, forcing exit');
@@ -908,6 +975,7 @@ export class JupyterApplication implements IApplication, IDisposable {
     forceExit.unref();
 
     this.dispose()
+      .then(() => closeTelemetry())
       .then(() => {
         clearTimeout(forceExit);
         process.exit();
@@ -915,7 +983,7 @@ export class JupyterApplication implements IApplication, IDisposable {
       .catch(err => {
         clearTimeout(forceExit);
         log.error(new Error('JupyterLab could not close successfully'));
-        process.exit();
+        closeTelemetry().finally(() => process.exit());
       });
   }
 

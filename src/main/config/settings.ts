@@ -17,6 +17,8 @@ export enum ThemeType {
 export enum EngineType {
   Docker = 'docker',
   Podman = 'podman',
+  CrumbleCracker = 'crumblecracker',
+  /** Legacy persisted value, migrated on read. */
   TinyRange = 'tinyrange'
 }
 
@@ -37,6 +39,12 @@ export enum LogLevel {
   Info = 'info',
   Verbose = 'verbose',
   Debug = 'debug'
+}
+
+export enum TelemetryConsent {
+  Unset = 'unset',
+  On = 'on',
+  Off = 'off'
 }
 
 export enum CtrlWBehavior {
@@ -62,31 +70,19 @@ export enum SettingType {
   overrideDefaultServerArgs = 'overrideDefaultServerArgs',
   serverEnvVars = 'serverEnvVars',
   engineType = 'engineType',
+  gpuAcceleration = 'gpuAcceleration',
   startupMode = 'startupMode',
 
   ctrlWBehavior = 'ctrlWBehavior',
 
-  logLevel = 'logLevel'
+  logLevel = 'logLevel',
+
+  telemetryConsent = 'telemetryConsent'
 }
 
-// export const serverLaunchArgsFixed = [
-//   '-e NEURODESKTOP_VERSION={tag} vnmd/neurodesktop:{tag}'
-//   // // use our token rather than any pre-configured password
-// ];
-
-export const serverLaunchArgsDefault = [
-  //   // do not use any config file
-  //   '--JupyterApp.config_file_name=""',
-  //   // enable hidden files (let user decide whether to display them)
-  //   '--ContentsManager.allow_hidden=True'
-  "start.sh jupyter lab --ServerApp.password=''",
-  '--no-browser',
-  '--expose-app-in-browser',
-  `--ServerApp.token='{token}'`,
-  `--ServerApp.port={port}`,
-  '--LabApp.quit_button=False',
-  '--NotebookIntelligence.github_access_token=remember'
-];
+// The default server launch args live in
+// src/main/config/baseContainerConfig.yml (defaultServerArgs) and are read
+// through ContainerConfigParser.getDefaultServerArgs().
 
 export class Setting<T> {
   constructor(defaultValue: T, options?: Setting.IOptions) {
@@ -150,11 +146,14 @@ export class UserSettings {
       }),
       serverEnvVars: new Setting<KeyValueMap>({}, { wsOverridable: true }),
       engineType: new Setting<EngineType>(EngineType.Docker),
+      gpuAcceleration: new Setting<boolean>(false),
       startupMode: new Setting<StartupMode>(StartupMode.WelcomePage),
       cvmfsMode: new Setting<CvmfsMode>(CvmfsMode.Stream),
       ctrlWBehavior: new Setting<CtrlWBehavior>(CtrlWBehavior.CloseTab),
 
-      logLevel: new Setting<string>(LogLevel.Info)
+      logLevel: new Setting<string>(LogLevel.Info),
+
+      telemetryConsent: new Setting<TelemetryConsent>(TelemetryConsent.Unset)
     };
 
     if (readSettings) {
@@ -181,7 +180,10 @@ export class UserSettings {
     for (let key in SettingType) {
       if (key in jsonData) {
         const setting = this._settings[key];
-        setting.value = jsonData[key];
+        setting.value =
+          key === SettingType.engineType && jsonData[key] === 'tinyrange'
+            ? EngineType.CrumbleCracker
+            : jsonData[key];
       }
     }
   }

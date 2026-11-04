@@ -85,7 +85,8 @@ Container naming: `neurodeskapp-<port>` for auto-started containers.
 
 ### Configuration Files
 
-- `neurodesktop.toml` — Docker image version (`jupyter_neurodesk_version`) and launch parameters
+- `container_installer/neurodesk.yml` — Default container image version, registry, and container details
+- `src/main/config/baseContainerConfig.yml` — Container launch flags and default server arguments
 - `package.json` — App version, tinyrange version, electron-builder config
 
 ## Code Conventions

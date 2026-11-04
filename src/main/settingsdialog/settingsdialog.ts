@@ -6,6 +6,10 @@ import { BrowserWindow } from 'electron';
 import * as path from 'path';
 import { ThemedWindow } from '../dialog/themedwindow';
 import {
+  getDefaultStorageDirectory,
+  readDefaultStorageMount
+} from '../config/storageMount';
+import {
   CtrlWBehavior,
   CvmfsMode,
   EngineType,
@@ -15,6 +19,7 @@ import {
   // serverLaunchArgsDefault,
   // serverLaunchArgsFixed,
   StartupMode,
+  TelemetryConsent,
   ThemeType
 } from '../config/settings';
 export class SettingsDialog {
@@ -29,6 +34,7 @@ export class SettingsDialog {
 
     const {
       engineType,
+      gpuAcceleration,
       startupMode,
       cvmfsMode,
       theme,
@@ -42,7 +48,8 @@ export class SettingsDialog {
       serverArgs,
       // overrideDefaultServerArgs,
       serverEnvVars,
-      ctrlWBehavior
+      ctrlWBehavior,
+      telemetryConsent
     } = options;
     const installUpdatesAutomaticallyEnabled = process.platform === 'darwin';
     const installUpdatesAutomatically =
@@ -201,9 +208,12 @@ export class SettingsDialog {
                 <label slot="label">Engine Options</label>
                 <jp-radio name="engine-type" value="docker" <%= engineType === 'docker' ? 'checked' : '' %>>Docker</jp-radio>
                 <jp-radio name="engine-type" value="podman" <%= engineType === 'podman' ? 'checked' : '' %>>Podman</jp-radio>
-                <jp-radio name="engine-type" value="tinyrange" <%= engineType === 'tinyrange' ? 'checked' : '' %>>TinyRange</jp-radio>
+                <jp-radio name="engine-type" value="crumblecracker" <%= engineType === 'crumblecracker' ? 'checked' : '' %>>CrumbleCracker</jp-radio>
                 </jp-radio-group>
 
+              <jp-checkbox id="gpu-acceleration" <%= gpuAcceleration ? 'checked' : '' %>>
+                GPU-accelerated native desktop (CrumbleCracker, Apple Silicon; next session)
+              </jp-checkbox>
               <jp-radio-group orientation="horizontal">
                 <label slot="label">On startup</label>
                 <jp-radio name="startup-mode" value="welcome-page" <%= startupMode === 'welcome-page' ? 'checked' : '' %>>Show welcome page</jp-radio>
@@ -281,13 +291,24 @@ export class SettingsDialog {
             </jp-tab-panel>
 
             <jp-tab-panel id="tab-panel-privacy">
+              <div class="setting-section">
+                <div class="row" style="line-height: 30px;">
+                  <label>Crash and mini app reporting</label>
+                </div>
+                <div class="row">
+                  <jp-checkbox id='checkbox-telemetry' type='checkbox' <%= telemetryConsent === 'on' ? 'checked' : '' %>>Send crash reports and mini app selections to help improve Neurodesk</jp-checkbox>
+                </div>
+                <div class="row" style="opacity: 0.7; font-size: 12px; margin-top: 4px;">
+                  <label>Includes error details, OS info, app logs, and the mini app and local or remote launch choice. Does not include a URL or image tag in app selection events.</label>
+                </div>
+              </div>
+
               <div id="clear-history">
                 <div class="row" style="line-height: 30px;">
                   <label>Clear History</label>
                 </div>
                 <jp-checkbox id='checkbox-clear-session-data' type='checkbox' checked="true">Browser session cache & data</jp-checkbox>
                 <jp-checkbox id='checkbox-clear-recent-remote-urls' type='checkbox'>Recent remote URLs</jp-checkbox>
-                <jp-checkbox id='checkbox-clear-recent-sessions' type='checkbox'>Recent sessions</jp-checkbox>
               
 
                 <div class="row" style="height: 60px">
@@ -297,7 +318,6 @@ export class SettingsDialog {
               <script>
                 const clearSessionDataCheckbox = document.getElementById('checkbox-clear-session-data');
                 const clearRecentRemoteURLs = document.getElementById('checkbox-clear-recent-remote-urls');
-                const clearRecentSessions = document.getElementById('checkbox-clear-recent-sessions');
                 const clearUserSetPythonEnvs = document.getElementById('checkbox-clear-user-set-python-envs');
                 const clearHistoryProgress = document.getElementById('clear-history-progress');
 
@@ -305,8 +325,7 @@ export class SettingsDialog {
                   clearHistoryProgress.style.visibility = 'visible';
                   window.electronAPI.clearHistory({
                     sessionData: clearSessionDataCheckbox.checked,
-                    recentRemoteURLs: clearRecentRemoteURLs.checked,
-                    recentSessions: clearRecentSessions.checked
+                    recentRemoteURLs: clearRecentRemoteURLs.checked
                   }).then(() => {
                     clearHistoryProgress.style.visibility = 'hidden';
                   });
@@ -411,6 +430,7 @@ export class SettingsDialog {
         function handleApply() {
           const engineType = document.querySelector('jp-radio[name="engine-type"].checked').value;
           window.electronAPI.setEngineType(engineType);
+          window.electronAPI.setGPUAcceleration(document.getElementById("gpu-acceleration").checked);
           const startupMode = document.querySelector('jp-radio[name="startup-mode"].checked').value;
           window.electronAPI.setStartupMode(startupMode);
           const cvmfsMode = document.querySelector('jp-radio[name="cvmfs-mode"].checked').value;
@@ -430,6 +450,8 @@ export class SettingsDialog {
           const ctrlWBehavior = document.querySelector('jp-radio[name="ctrl-w-behavior"].checked').value;
           window.electronAPI.setCtrlWBehavior(ctrlWBehavior);
 
+          const telemetryCheckbox = document.getElementById('checkbox-telemetry');
+          window.electronAPI.setTelemetryConsent(telemetryCheckbox.checked ? 'on' : 'off');
 
           window.electronAPI.restartApp();
         }
@@ -448,6 +470,7 @@ export class SettingsDialog {
     `;
     this._pageBody = ejs.render(template, {
       engineType,
+      gpuAcceleration,
       startupMode,
       cvmfsMode,
       theme,
@@ -459,15 +482,17 @@ export class SettingsDialog {
       // frontEndMode,
       defaultWorkingDirectory,
       neurodesktopStorageDirectory,
-      defaultStoragePlaceholder:
-        process.platform === 'win32'
-          ? 'C:/neurodesktop-storage'
-          : '~/neurodesktop-storage',
+      defaultStoragePlaceholder: getDefaultStorageDirectory(
+        process.platform,
+        readDefaultStorageMount(),
+        '~'
+      ),
       logLevel,
       serverArgs,
       // overrideDefaultServerArgs,
       serverEnvVars: strServerEnvVars,
-      ctrlWBehavior
+      ctrlWBehavior,
+      telemetryConsent
     });
   }
 
@@ -493,6 +518,7 @@ export namespace SettingsDialog {
   export interface IOptions {
     isDarkTheme: boolean;
     engineType: EngineType;
+    gpuAcceleration: boolean;
     startupMode: StartupMode;
     cvmfsMode: CvmfsMode;
     theme: ThemeType;
@@ -510,5 +536,6 @@ export namespace SettingsDialog {
     // overrideDefaultServerArgs: boolean;
     serverEnvVars: KeyValueMap;
     ctrlWBehavior: CtrlWBehavior;
+    telemetryConsent: TelemetryConsent;
   }
 }

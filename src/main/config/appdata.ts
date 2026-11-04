@@ -3,25 +3,12 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { clearSession, getUserDataDir } from '../utils';
+import { getUserDataDir } from '../utils';
 import { SessionConfig } from './sessionconfig';
-import { session as electronSession } from 'electron';
-import { ISignal, Signal } from '@lumino/signaling';
-
-const MAX_RECENT_SESSIONS = 20;
 
 export interface INewsItem {
   title: string;
   link: string;
-}
-
-export interface IRecentSession {
-  workingDirectory?: string;
-  filesToOpen?: string[];
-  remoteURL?: string;
-  persistSessionData?: boolean;
-  partition?: string;
-  date?: Date;
 }
 
 export interface IRecentRemoteURL {
@@ -69,25 +56,25 @@ export class ApplicationData {
       }
     }
 
-    this.recentSessions = [];
-    if (
-      'recentSessions' in jsonData &&
-      Array.isArray(jsonData.recentSessions)
-    ) {
-      for (const recentSession of jsonData.recentSessions) {
-        this.recentSessions.push({
-          workingDirectory: recentSession.workingDirectory,
-          filesToOpen: recentSession.filesToOpen
-            ? [...recentSession.filesToOpen]
-            : [],
-          remoteURL: recentSession.remoteURL,
-          persistSessionData: recentSession.persistSessionData,
-          partition: recentSession.partition,
-          date: new Date(recentSession.date)
-        });
+    this.persistentRemotePartitions = [];
+    if (Array.isArray(jsonData.persistentRemotePartitions)) {
+      for (const partition of jsonData.persistentRemotePartitions) {
+        this.addPersistentRemotePartition(partition);
       }
     }
-    this._sortRecentItems(this.recentSessions);
+    if (Array.isArray(jsonData.sessions)) {
+      for (const session of jsonData.sessions) {
+        if (session?.remoteURL && session.persistSessionData !== false) {
+          this.addPersistentRemotePartition(session.partition);
+        }
+      }
+    }
+    // Keep old remote browser data clearable while dropping recent sessions.
+    if (Array.isArray(jsonData.recentSessions)) {
+      for (const recentSession of jsonData.recentSessions) {
+        this.addPersistentRemotePartition(recentSession?.partition);
+      }
+    }
 
     this.recentRemoteURLs = [];
     if (
@@ -123,22 +110,7 @@ export class ApplicationData {
       appDataJSON.sessions.push(sessionConfig.serialize());
     }
 
-    appDataJSON.recentSessions = [];
-    for (const recentSession of this.recentSessions) {
-      appDataJSON.recentSessions.push({
-        workingDirectory: recentSession.workingDirectory,
-        filesToOpen:
-          recentSession.filesToOpen.length > 0
-            ? [...recentSession.filesToOpen]
-            : undefined,
-        remoteURL: recentSession.remoteURL,
-        persistSessionData: recentSession.persistSessionData,
-        partition: recentSession.persistSessionData
-          ? recentSession.partition
-          : undefined,
-        date: recentSession.date.toISOString()
-      });
-    }
+    appDataJSON.persistentRemotePartitions = this.persistentRemotePartitions;
 
     appDataJSON.recentRemoteURLs = [];
     for (const remoteUrl of this.recentRemoteURLs) {
@@ -186,94 +158,14 @@ export class ApplicationData {
     }
   }
 
-  async addSessionToRecents(session: IRecentSession) {
-    const filesToOpenCompare = (lhs: string[], rhs: string[]): boolean => {
-      return (
-        Array.isArray(lhs) &&
-        Array.isArray(rhs) &&
-        lhs.length === rhs.length &&
-        lhs.every((element, index) => {
-          return element === rhs[index];
-        })
-      );
-    };
-
-    const isRemote = session.remoteURL !== undefined;
-    const existing = this.recentSessions.find(item => {
-      return isRemote
-        ? session.remoteURL === item.remoteURL
-        : session.workingDirectory === item.workingDirectory &&
-            filesToOpenCompare(session.filesToOpen, item.filesToOpen);
-    });
-
-    const now = new Date();
-
-    if (existing) {
-      existing.date = now;
-      // update persist info for remote
-      if (isRemote) {
-        existing.persistSessionData = session.persistSessionData;
-        if (
-          existing.partition &&
-          existing.partition !== session.partition &&
-          existing.partition.startsWith('persist:')
-        ) {
-          try {
-            await clearSession(
-              electronSession.fromPartition(existing.partition)
-            );
-          } catch (error) {
-            //
-          }
-        }
-        existing.partition = session.partition;
-      }
-    } else {
-      let filesToOpen = [...(session.filesToOpen || [])];
-      this.recentSessions.push({
-        workingDirectory: session.workingDirectory,
-        filesToOpen: filesToOpen,
-        remoteURL: session.remoteURL,
-        persistSessionData: session.persistSessionData,
-        partition: session.partition,
-        date: now
-      });
+  addPersistentRemotePartition(partition: string | undefined) {
+    if (
+      typeof partition === 'string' &&
+      partition.startsWith('persist:') &&
+      !this.persistentRemotePartitions.includes(partition)
+    ) {
+      this.persistentRemotePartitions.push(partition);
     }
-
-    this._sortRecentItems(this.recentSessions);
-
-    if (this.recentSessions.length > MAX_RECENT_SESSIONS) {
-      for (
-        let i = this.recentSessions.length - 1;
-        i >= MAX_RECENT_SESSIONS;
-        --i
-      ) {
-        // make sure persisted sessions are cleared
-        await this.removeSessionFromRecents(i);
-      }
-    }
-
-    this._recentSessionsChanged.emit();
-  }
-
-  async removeSessionFromRecents(sessionIndex: number) {
-    if (sessionIndex >= 0 && sessionIndex < this.recentSessions.length) {
-      const session = this.recentSessions[sessionIndex];
-      if (session.partition && session.partition.startsWith('persist:')) {
-        try {
-          await clearSession(electronSession.fromPartition(session.partition));
-        } catch (error) {
-          //
-        }
-      }
-      this.recentSessions.splice(sessionIndex, 1);
-    }
-
-    this._recentSessionsChanged.emit();
-  }
-
-  get recentSessionsChanged(): ISignal<this, void> {
-    return this._recentSessionsChanged;
   }
 
   private _getAppDataPath(): string {
@@ -290,9 +182,7 @@ export class ApplicationData {
   newsList: INewsItem[] = [];
   sessions: SessionConfig[] = [];
   recentRemoteURLs: IRecentRemoteURL[] = [];
-  recentSessions: IRecentSession[] = [];
-
-  private _recentSessionsChanged = new Signal<this, void>(this);
+  persistentRemotePartitions: string[] = [];
 }
 
 export const appData = ApplicationData.getSingleton();

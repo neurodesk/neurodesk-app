@@ -22,6 +22,8 @@
     <true/>
     <key>com.apple.security.automation.apple-events</key>
     <true/>
+    <key>com.apple.security.hypervisor</key>
+    <true/>
     <key>com.apple.security.virtualization</key>
     <true/>
   </dict>
