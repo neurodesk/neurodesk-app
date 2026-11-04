@@ -32,6 +32,8 @@ Neurodesk App saves logs in the following locations. Information about crashes, 
 
 You can change the log level from the Settings dialog. Setting log level to `Debug` will provide most detailed logs, while setting to `Error` will configure the app to log only when errors occur. Changing log level requires application restart.
 
+To check telemetry in an installed app, enable telemetry consent, set the log level to Info or Debug, restart the app, then choose **Settings → Show logs**. Search `main.log` for `Telemetry configuration` and `Telemetry initialized`. `apiKeySource: package` and `hostSource: package` mean the values were included during the build. `hostOrigin` shows the destination, while the log never prints the key. After using a mini app or starting a session, `Telemetry event queued` shows the event name. The app sends telemetry through Electron's network stack. `Telemetry request started` and `Telemetry request completed` show the destination origin, endpoint category, whether the body was compressed, HTTP status, and elapsed time without logging the key or event body. `Telemetry request failed` and `Telemetry delivery failed` report error names and safe network codes such as `ENOTFOUND`. The SDK can take about a minute to report a failed request because it retries. `Telemetry batch delivered` means the SDK completed an HTTP send. If consent is off, the log says `Telemetry disabled: consent not granted` instead.
+
 <img src="media/set-log-level.png" alt="Set log level" width=350 />
 
 Log level can also be set using CLI or by specifying in `settings.json` file. In order to set log level temporarily via CLI, run the jlab CLI command with parameter `--log-level` as shown below. Checkout `jlab --help` for all log level options and other CLI parameters.
@@ -326,3 +328,10 @@ If you do need the UID workaround, add your account to `/etc/subuid` and `/etc/s
 # /etc/subgid
 <USERNAME>:100000:65536
 ```
+
+## Session is stuck in progress view on Windows with Podman
+
+On Windows, Neurodesk’s Podman container starts and Jupyter responds inside the Podman machine, but Windows cannot connect to the published 127.0.0.1 port.
+The app therefore stays on its progress screen. The machine reports Rootful: true, pointing to Podman’s host port forwarding rather than a container startup failure.
+
+The proposed workaround is to stop the machine, run podman machine set --rootful=false, start it again, and relaunch Neurodesk. The separate pids controller error is addressed by the app’s --cgroups=disabled flag

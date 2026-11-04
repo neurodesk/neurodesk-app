@@ -9,7 +9,6 @@ import {
   shell,
   WebContentsView
 } from 'electron';
-import * as fs from 'fs';
 import { WelcomeView } from '../welcomeview/welcomeview';
 import { LabView } from '../labview/labview';
 import {
@@ -39,6 +38,11 @@ import { SessionConfig } from '../config/sessionconfig';
 import { ISignal, Signal } from '@lumino/signaling';
 import { EventTypeMain } from '../eventtypes';
 import { EventManager } from '../eventmanager';
+import {
+  captureLocalSessionStartup,
+  captureMiniAppSelection,
+  captureRemoteSessionStarted
+} from '../telemetry';
 
 export enum ContentViewType {
   Welcome = 'welcome',
@@ -46,6 +50,7 @@ export enum ContentViewType {
 }
 
 export interface IServerInfo {
+  nativeDesktop?: boolean;
   type: 'local' | 'remote';
   url?: string;
   persistSessionData?: boolean;
@@ -118,21 +123,33 @@ export class SessionWindow implements IDisposable {
   }
 
   private async _createServerForSession(progressView?: ProgressView) {
+    const engineType = this._wsSettings
+      .getValue(SettingType.engineType)
+      .toString();
     const serverOptions: JupyterServer.IOptions = {
-      workingDirectory: this._sessionConfig.resolvedWorkingDirectory
+      workingDirectory: this._sessionConfig.resolvedWorkingDirectory,
+      containerConfigName: this._sessionConfig.containerConfigName,
+      imageVersion: this._sessionConfig.imageVersion || undefined
     };
 
     console.debug('serverOptions ', serverOptions);
 
-    const server = await this.serverFactory.createServer(
-      serverOptions,
-      progressView
-    );
-    this._server = server;
-    await server.server.started;
-    const serverInfo = server.server.info;
-    this._sessionConfig.token = serverInfo.token;
-    this._sessionConfig.url = serverInfo.url;
+    try {
+      const server = await this.serverFactory.createServer(
+        serverOptions,
+        progressView
+      );
+      this._server = server;
+      await server.server.started;
+      const serverInfo = server.server.info;
+      this._sessionConfig.token = serverInfo.token;
+      this._sessionConfig.url = serverInfo.url;
+    } catch (error) {
+      captureLocalSessionStartup(engineType, true);
+      throw error;
+    }
+
+    captureLocalSessionStartup(engineType, false);
   }
 
   load() {
@@ -218,12 +235,6 @@ export class SessionWindow implements IDisposable {
     }
   }
 
-  updateRecentSessionList(resetCollapseState: boolean) {
-    if (this._welcomeView) {
-      this._welcomeView.updateRecentSessionList(resetCollapseState);
-    }
-  }
-
   dispose(): Promise<void> {
     if (this._disposePromise) {
       return this._disposePromise;
@@ -231,10 +242,6 @@ export class SessionWindow implements IDisposable {
 
     this._disposePromise = new Promise<void>(resolve => {
       this._evm.dispose();
-      appData.recentSessionsChanged.disconnect(
-        this._recentSessionsChangedHandler,
-        this
-      );
 
       this._disposeSession().then(() => {
         // _disposeSession only closes the labView. The persistent titlebar and
@@ -402,19 +409,7 @@ export class SessionWindow implements IDisposable {
     return this._serverFactory;
   }
 
-  private _recentSessionsChangedHandler() {
-    if (this._recentSessionRemovalByThis) {
-      return;
-    }
-    this._welcomeView?.updateRecentSessionList(true);
-  }
-
   private _registerListeners() {
-    appData.recentSessionsChanged.connect(
-      this._recentSessionsChangedHandler,
-      this
-    );
-
     this._window.on('close', async () => {
       await this.dispose();
     });
@@ -458,6 +453,34 @@ export class SessionWindow implements IDisposable {
       this._window.unmaximize();
     });
 
+    this._evm.registerEventHandler(
+      EventTypeMain.OpenNativeDesktop,
+      async event => {
+        const server = this._server?.server;
+        if (
+          !server ||
+          server.info.engine !== 'crumblecracker' ||
+          event.senderFrame !== event.sender.mainFrame
+        ) {
+          return;
+        }
+        const fromTitlebar =
+          event.sender === this._titleBarView?.view.webContents &&
+          event.sender.getURL().startsWith('data:text/html');
+        const fromLab =
+          event.sender === this._labView?.view.webContents &&
+          new URL(event.sender.getURL()).origin === server.info.url.origin;
+        if (!fromTitlebar && !fromLab) {
+          return;
+        }
+        try {
+          await server.openDesktop();
+        } catch (error) {
+          dialog.showErrorBox('Could not open native desktop', String(error));
+        }
+      }
+    );
+
     this._evm.registerEventHandler(EventTypeMain.CloseWindow, event => {
       if (event.sender !== this._titleBarView?.view?.webContents) {
         return;
@@ -467,10 +490,18 @@ export class SessionWindow implements IDisposable {
 
     this._evm.registerEventHandler(
       EventTypeMain.CreateNewSession,
-      async (event, type: 'notebook' | 'blank') => {
+      async (
+        event,
+        type: 'notebook' | 'blank',
+        containerConfigName?: string,
+        imageVersion?: string,
+        miniAppId?: string
+      ) => {
         if (event.sender !== this.contentView?.webContents) {
           return;
         }
+
+        captureMiniAppSelection(miniAppId, 'local');
 
         this._showProgressView(
           'Creating new session',
@@ -478,7 +509,12 @@ export class SessionWindow implements IDisposable {
           `
         );
 
-        const sessionConfig = SessionConfig.createLocal();
+        const sessionConfig = SessionConfig.createLocal(
+          undefined,
+          undefined,
+          containerConfigName,
+          imageVersion
+        );
         this._sessionConfig = sessionConfig;
         this._wsSettings = new WorkspaceSettings(
           sessionConfig.workingDirectory
@@ -488,20 +524,18 @@ export class SessionWindow implements IDisposable {
             ? '<div class="message-row"><a href="https://docs.docker.com/engine/install/">Install Docker</a></div>'
             : this._engineType === 'podman'
             ? '<div class="message-row"><a href="https://podman.io/docs/installation">Install Podman</a></div>'
-            : '<div class="message-row"><a href="https://www.neurodesk.org/docs/getting-started/local/neurodeskapp/#install-qemu">Install QEMU</a></div>';
+            : '<div class="message-row">Check the bundled CrumbleCracker runtime and virtualization support.</div>';
         let engineName =
           this._engineType.charAt(0).toUpperCase() + this._engineType.slice(1);
 
         try {
           await this._createServerForSession(this._progressView);
-          appData.addSessionToRecents({
-            workingDirectory: this._sessionConfig.resolvedWorkingDirectory,
-            filesToOpen: [...this._sessionConfig.filesToOpen]
-          });
         } catch (error) {
           this._showProgressView(
             `Failed to create session!\nCheck if ${
-              this._engineType === 'tinyrange' ? 'QEMU' : engineName
+              this._engineType === 'crumblecracker'
+                ? 'CrumbleCracker'
+                : engineName
             } is running and try again.`,
             `
             <div class="message-row">${error}</div>
@@ -565,12 +599,14 @@ export class SessionWindow implements IDisposable {
 
     this._evm.registerEventHandler(
       EventTypeMain.CreateNewRemoteSession,
-      async event => {
+      async (event, remoteUrls: string[], miniAppId?: string) => {
         if (event.sender !== this.contentView?.webContents) {
           return;
         }
 
-        this._selectRemoteServerUrl();
+        captureMiniAppSelection(miniAppId, 'remote');
+
+        this._selectRemoteServerUrl(remoteUrls);
       }
     );
 
@@ -591,53 +627,6 @@ export class SessionWindow implements IDisposable {
           persistSessionData,
           undefined
         );
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.OpenRecentSession,
-      (event, sessionIndex: number) => {
-        if (event.sender !== this._welcomeView?.view?.webContents) {
-          return;
-        }
-
-        this._createSessionForRecent(sessionIndex);
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.DeleteRecentSession,
-      async (event, sessionIndex: number) => {
-        if (
-          !(
-            event.sender === this._welcomeView?.view?.webContents ||
-            event.sender === this._progressView?.view?.view?.webContents
-          )
-        ) {
-          return;
-        }
-
-        // update this window's list without resetting collapse state
-        this._recentSessionRemovalByThis = true;
-
-        await appData.removeSessionFromRecents(sessionIndex);
-
-        this._recentSessionRemovalByThis = false;
-
-        if (event.sender === this._welcomeView.view.webContents) {
-          this._welcomeView.updateRecentSessionList(false);
-        }
-      }
-    );
-
-    this._evm.registerEventHandler(
-      EventTypeMain.OpenRecentSessionWithDefaultEnv,
-      (event, sessionIndex: number) => {
-        if (event.sender !== this._progressView?.view?.view?.webContents) {
-          return;
-        }
-
-        this._createSessionForRecent(sessionIndex);
       }
     );
 
@@ -772,6 +761,7 @@ export class SessionWindow implements IDisposable {
         const info = this._server?.server.info;
         const serverInfo: IServerInfo = {
           type: 'local',
+          nativeDesktop: info.engine === 'crumblecracker',
           workingDirectory: info.workingDirectory,
           url: this._sessionConfig.url?.href
         };
@@ -873,7 +863,7 @@ export class SessionWindow implements IDisposable {
     });
   }
 
-  private async _selectRemoteServerUrl() {
+  private async _selectRemoteServerUrl(remoteUrls?: string[]) {
     this._remoteServerSelectDialog = new RemoteServerSelectDialog({
       isDarkTheme: this._isDarkTheme,
       parent: this._window,
@@ -883,11 +873,8 @@ export class SessionWindow implements IDisposable {
 
     this._remoteServerSelectDialog.load();
 
-    const runningServers: string[] = [
-      'https://play.neurodesk.cloud.edu.au/',
-      'https://play-america.neurodesk.org/',
-      'https://play-europe.neurodesk.org/'
-    ];
+    const runningServers: string[] =
+      remoteUrls && remoteUrls.length > 0 ? [...remoteUrls] : [];
     this._remoteServerSelectDialog.setRunningServerList(runningServers);
   }
 
@@ -971,8 +958,7 @@ export class SessionWindow implements IDisposable {
 
   private async _createSessionForLocal(
     workingDirectory?: string,
-    filesToOpen?: string[],
-    recentSessionIndex?: number
+    filesToOpen?: string[]
   ) {
     const resolvedWorkingDirectory = resolveWorkingDirectory(workingDirectory);
     const sessionConfig = SessionConfig.createLocal(
@@ -1001,11 +987,6 @@ export class SessionWindow implements IDisposable {
     } else {
       this._hideProgressView();
     }
-
-    appData.addSessionToRecents({
-      workingDirectory: sessionConfig.resolvedWorkingDirectory,
-      filesToOpen: [...sessionConfig.filesToOpen]
-    });
   }
 
   private _createSessionForRemoteUrl(
@@ -1029,17 +1010,16 @@ export class SessionWindow implements IDisposable {
       sessionConfig.token = token;
 
       appData.addRemoteURLToRecents(remoteURL);
-      appData.addSessionToRecents({
-        remoteURL,
-        persistSessionData,
-        partition: sessionConfig.partition
-      });
+      if (persistSessionData) {
+        appData.addPersistentRemotePartition(sessionConfig.partition);
+      }
 
       this._contentViewType = ContentViewType.Lab;
       this._updateContentView();
       this._hideProgressView();
       this._updateSessionWindowPositionConfig();
       this._sessionConfigChanged.emit();
+      captureRemoteSessionStarted(persistSessionData);
     } catch (error) {
       this._setProgress(
         'Connection Error',
@@ -1049,63 +1029,6 @@ export class SessionWindow implements IDisposable {
         </div>`,
         false
       );
-    }
-  }
-
-  private _createSessionForRecent(sessionIndex: number) {
-    if (sessionIndex < 0 || sessionIndex >= appData.recentSessions.length) {
-      return;
-    }
-    const recentSession = appData.recentSessions[sessionIndex];
-
-    if (recentSession.remoteURL) {
-      this._createSessionForRemoteUrl(
-        recentSession.remoteURL,
-        recentSession.persistSessionData,
-        recentSession.partition
-      );
-    } else {
-      let workingDirectoryExists = true;
-      try {
-        const stat = fs.statSync(recentSession.workingDirectory);
-        if (!stat.isDirectory()) {
-          workingDirectoryExists = false;
-        }
-      } catch (error) {
-        workingDirectoryExists = false;
-      }
-
-      if (!workingDirectoryExists) {
-        this._showProgressView(
-          'Recent session load failed',
-          `<div class="message-row">
-          Working directory "${recentSession.workingDirectory}" does not exist anymore.
-          </div>
-          <div class="message-row">
-            <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.DeleteRecentSession}', ${sessionIndex}); sendMessageToMain('${EventTypeMain.ShowWelcomeView}');">Remove from recents</a>
-          </div>
-          <div class="message-row">
-            <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.HideProgressView}')">Go to Welcome Page</a>
-          </div>`,
-          false
-        );
-        return;
-      }
-
-      this._createSessionForLocal(
-        recentSession.workingDirectory,
-        recentSession.filesToOpen,
-        sessionIndex
-      ).catch(error => {
-        this._setProgress(
-          'Failed to create session',
-          `<div class="message-row">${error}</div>
-          <div class="message-row">
-            <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
-          </div>`,
-          false
-        );
-      });
     }
   }
 
@@ -1169,7 +1092,6 @@ export class SessionWindow implements IDisposable {
   private _disposePromise: Promise<void>;
   private _sessionConfigChanged = new Signal<this, void>(this);
   private _evm = new EventManager();
-  private _recentSessionRemovalByThis = false;
   private _engineType: EngineType;
 }
 

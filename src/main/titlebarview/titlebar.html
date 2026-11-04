@@ -40,6 +40,7 @@ Distributed under the terms of the Modified BSD License.
         width: 100%;
         text-align: center;
       }
+      #native-desktop-button { -webkit-app-region: no-drag; margin: 2px 8px; cursor: pointer; }
       #right-widgets {
         position: absolute;
         top: 0;
@@ -154,6 +155,7 @@ Distributed under the terms of the Modified BSD License.
     <div class="titlebar">
       <div id="app-title" class="app-title">Neurodesk</div>
       <div id="right-widgets">
+        <button id="native-desktop-button" hidden title="Open the native Linux desktop">▣ Desktop</button>
         <div id="server-button">
           <div id="server-icon">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Pro 6.2.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2022 Fonticons, Inc. --><path d="M64 32C28.7 32 0 60.7 0 96v64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64H64zM344 152c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24zm96-24c0 13.3-10.7 24-24 24s-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24zM64 288c-35.3 0-64 28.7-64 64v64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V352c0-35.3-28.7-64-64-64H64zM344 408c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24zm104-24c0 13.3-10.7 24-24 24s-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24z"/></svg>
@@ -195,6 +197,8 @@ Distributed under the terms of the Modified BSD License.
     </div>
     <script>
       // const appTitle = document.getElementById('app-title');
+      const desktopButton = document.getElementById('native-desktop-button');
+      desktopButton.onclick = () => window.electronAPI.openNativeDesktop();
       const serverButton = document.getElementById('server-button');
       const serverIcon = document.getElementById('server-icon');
       const serverLabel = document.getElementById('server-label');
@@ -218,6 +222,7 @@ Distributed under the terms of the Modified BSD License.
 
       window.electronAPI.onShowServerStatus((show) => {
         serverButton.style.display = show ? 'flex' : 'none';
+        if (!show) { desktopButton.hidden = true; }
 
         if (show) {
           updateServerStatus();
@@ -274,6 +279,7 @@ Distributed under the terms of the Modified BSD License.
 
       const updateServerStatus = () => {
         window.electronAPI.getServerInfo().then(serverInfo => {
+          desktopButton.hidden = !serverInfo?.nativeDesktop;
           if (!serverInfo) {
             return;
           }

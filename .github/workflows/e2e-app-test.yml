@@ -12,12 +12,15 @@ on:
 # Engine coverage:
 #   Docker    — Linux, macOS, Windows (primary engine)
 #   Podman    — Linux only (pre-installed on ubuntu runners)
-#   TinyRange — Linux only (bundled in app, needs KVM for QEMU)
+# Native CrumbleCracker UI/GPU acceptance runs on a logged-in native peer; see CRUMBLECRACKER.md.
 
+permissions:
+  contents: read
+  
 jobs:
   # Gate the (expensive, 60-minute) e2e matrix on the launch-script unit tests.
   # They catch flag/ordering/syntax regressions in seconds, and cover the
-  # Windows and TinyRange rows that are commented out of the matrix below.
+  # Docker/Podman shell-launch behavior independently of the native API backend.
   unit-test:
     uses: ./.github/workflows/unit-test.yml
 
@@ -27,10 +30,13 @@ jobs:
       fail-fast: false
       matrix:
         cfg:
-          - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-22.04, tinyrange_os: linux-amd64, engine: docker, artifact: NeurodeskApp-debian-installer-x64 }
-          - { platform: mac, platform_name: macOS, os: macos-15, tinyrange_os: darwin-arm64, engine: tinyrange, artifact: NeurodeskApp-mac-installer-arm64 }
-          # - { platform: win, platform_name: Windows, os: windows-latest, tinyrange_os: windows-amd64, engine: tinyrange, artifact: NeurodeskApp-windows-installer }
-          # - { platform: linux-64, platform_name: Linux x64,  os: ubuntu-latest, tinyrange_os: linux-amd64, engine: tinyrange, artifact: NeurodeskApp-debian-installer-x64 }
+          - {
+              platform: linux-64,
+              platform_name: Linux x64,
+              os: ubuntu-22.04,
+              engine: docker,
+              artifact: NeurodeskApp-debian-installer-x64,
+            }
 
     runs-on: ${{ matrix.cfg.os }}
     timeout-minutes: 60
@@ -47,15 +53,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # Warm the local image store while the app downloads/installs.
+      # Warm the local image store with the configured fallback version while
+      # the app downloads/installs. The app may select a newer fetched release.
       #
       # server.ts:486 runs `<engine> image inspect <image>` and skips its own pull
-      # when the image is already present. So pre-pulling here does two things:
+      # when the selected image is already present. So pre-pulling can:
       #   1. Overlaps the ~2.5 GB fetch with artifact download + apt + dpkg install
       #      instead of paying it serially inside the launch script.
-      #   2. Takes the launch script's `timeout 300` pull (server.ts:497) off the
-      #      critical path. That timeout currently turns a slow Docker Hub day into
-      #      a hard run failure rather than a slow run.
+      #   2. Take the launch script's `timeout 300` pull (server.ts:497) off the
+      #      critical path when the fallback version is selected.
       #
       # Best-effort by design: if this fails or times out, the app pulls as before.
       - name: Start container image pre-pull (background)
@@ -64,15 +70,14 @@ jobs:
         run: |
           ENGINE="${{ matrix.cfg.engine }}"
 
-          TAG=$(grep -E '^[[:space:]]*jupyter_neurodesk_version' neurodesktop.toml \
+          TAG=$(grep -E '^[[:space:]]*defaultVersion:' container_installer/neurodesk.yml \
                 | head -1 | cut -d'"' -f2)
           if [ -z "$TAG" ]; then
-            echo "FAIL: could not read jupyter_neurodesk_version from neurodesktop.toml"
+            echo "FAIL: could not read defaultVersion from container_installer/neurodesk.yml"
             exit 1
           fi
 
-          # Must match server.ts:165 (`vnmd/neurodesktop:${tag}`) exactly, or the
-          # app's image-inspect check misses and it pulls again anyway.
+          # Match server.ts:165 (`vnmd/neurodesktop:${tag}`) for this version.
           SHORT_IMAGE="vnmd/neurodesktop:${TAG}"
           PULL_IMAGE="docker.io/${SHORT_IMAGE}"
           LOG="/tmp/prepull.log"
@@ -108,22 +113,11 @@ jobs:
           npm install --global yarn --prefer-offline
           yarn install
 
-      - name: Get TinyRange version (fallback build)
+      - name: Build bundled backend (fallback build)
         if: steps.download.outcome == 'failure'
-        id: package-info
-        run: |
-          echo "tinyrange_version=$(python3 scripts/get_package_version.py --package_name tinyrange)" >> "$GITHUB_OUTPUT"
-
-      - name: Install TinyRange (fallback build)
-        if: steps.download.outcome == 'failure'
-        run: |
-          TR_VERSION="${{ steps.package-info.outputs.tinyrange_version }}"
-          if [ -z "$TR_VERSION" ]; then
-            echo "FAIL: tinyrange_version is empty — python script may have failed"
-            exit 1
-          fi
-          curl -fSL -o tinyrange.zip "https://github.com/tinyrange/tinyrange/releases/download/v${TR_VERSION}/tinyrange-${{ matrix.cfg.tinyrange_os }}.zip"
-          unzip tinyrange.zip
+        uses: ./.github/actions/build-crumblecracker
+        with:
+          arch: x64
 
       - name: Build distribution package (fallback build)
         if: steps.download.outcome == 'failure'
@@ -148,7 +142,6 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          brew install qemu
           hdiutil attach dist/NeurodeskApp-arm64.dmg -nobrowse -quiet -mountpoint /Volumes/NeurodeskApp
           cp -R "/Volumes/NeurodeskApp/NeurodeskApp.app" /Applications/
           hdiutil detach "/Volumes/NeurodeskApp" -quiet
@@ -159,10 +152,13 @@ jobs:
         run: |
           echo "Using dist/win-unpacked/ directly (no installer needed)"
 
-      - name: Install websocket client
-        if: matrix.cfg.engine == 'tinyrange'
+      - name: Install E2E Python dependencies
         run: |
-          python3 -m pip install --upgrade --break-system-packages --user websocket-client requests
+          if [ "${{ matrix.cfg.platform }}" = "mac" ]; then
+            python3 -m pip install --upgrade --break-system-packages --user websocket-client requests
+          else
+            python3 -m pip install --upgrade --user websocket-client requests
+          fi
 
       - name: Setup Podman for rootless CI
         if: matrix.cfg.engine == 'podman'
@@ -194,13 +190,30 @@ jobs:
             SETTINGS_DIR="$APPDATA/neurodeskapp"
           fi
 
+          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
+            WORKING_DIR="$TEMP/neurodesk-test"
+          else
+            WORKING_DIR="/tmp/neurodesk-test"
+          fi
+
           mkdir -p "$SETTINGS_DIR"
-          printf '%s\n' '{' \
-            '  "startupMode": "new-local-session",' \
-            '  "engineType": "${{ matrix.cfg.engine }}",' \
-            '  "logLevel": "debug",' \
-            '  "checkForUpdatesAutomatically": false' \
-            '}' > "$SETTINGS_DIR/settings.json"
+          SETTINGS_DIR="$SETTINGS_DIR" WORKING_DIR="$WORKING_DIR" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          settings = {
+              "startupMode": "welcome-page",
+              "defaultWorkingDirectory": os.environ["WORKING_DIR"],
+              "serverArgs": os.environ["WORKING_DIR"],
+              "engineType": "${{ matrix.cfg.engine }}",
+              "logLevel": "debug",
+              "telemetryConsent": "off",
+              "checkForUpdatesAutomatically": False,
+          }
+          path = Path(os.environ["SETTINGS_DIR"]) / "settings.json"
+          path.write_text(json.dumps(settings, indent=2))
+          PY
 
           echo "=== Settings ==="
           cat "$SETTINGS_DIR/settings.json"
@@ -208,11 +221,7 @@ jobs:
           # Create storage and working directories
           mkdir -p ~/neurodesktop-storage
           chmod 777 ~/neurodesktop-storage
-          if [ "${{ matrix.cfg.platform }}" = "win" ]; then
-            mkdir -p "$TEMP/neurodesk-test"
-          else
-            mkdir -p /tmp/neurodesk-test
-          fi
+          mkdir -p "$WORKING_DIR"
 
       # Join the background pre-pull before launching, so the app never races a
       # half-finished pull. Never fails the job: if the image is not local, the
@@ -271,15 +280,17 @@ jobs:
             exit 1
           fi
 
-          # Launch with stdout/stderr captured for diagnostics
+          # Launch the welcome page with DevTools available for app selection.
+          # --working-dir is intentionally omitted: it bypasses the welcome
+          # page and creates a local session without a container config.
           if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
             xvfb-run --auto-servernum "$APP_BIN" \
-              --working-dir "$WORKING_DIR" --log-level debug \
+              --remote-debugging-port=9222 --log-level debug \
               > "$APP_LOG" 2>&1 &
             APP_PID=$!
           else
             "$APP_BIN" \
-              --working-dir "$WORKING_DIR" --log-level debug \
+              --remote-debugging-port=9222 --log-level debug \
               > "$APP_LOG" 2>&1 &
             APP_PID=$!
           fi
@@ -298,6 +309,9 @@ jobs:
           echo "app_log=$APP_LOG" >> "$GITHUB_OUTPUT"
           echo "Launched app with PID $APP_PID, engine=${{ matrix.cfg.engine }}, working dir: $WORKING_DIR"
 
+      - name: 'Select Neurodesk mini app for local launch'
+        run: python3 scripts/select_e2e_mini_app.py neurodesk --port 9222
+
       # ───────────────────────────────────────────────
       # App orchestration tests
       # ───────────────────────────────────────────────
@@ -310,7 +324,6 @@ jobs:
           echo "Waiting for app (PID $APP_PID) to start $ENGINE backend..."
 
           # For Docker/Podman we discover the container via CLI.
-          # For TinyRange we just poll the Jupyter HTTP endpoint since there's no container.
           CONTAINER=""
           PORT=""
           TOKEN=""
@@ -348,37 +361,13 @@ jobs:
                 echo "Container found: $CONTAINER (port=$PORT) after $((i * 5))s"
                 break
               fi
-            else
-              # TinyRange: no container to discover. Scan for a listening port
-              # started by the app. The app logs the port, but we can also check
-              # common port range. Try ports from the app log.
-              if [ "${{ matrix.cfg.platform }}" = "linux-64" ] || [ "${{ matrix.cfg.platform }}" = "linux-arm64" ]; then
-                LOG_FILE="$HOME/.config/neurodeskapp/logs/main.log"
-              elif [ "${{ matrix.cfg.platform }}" = "mac" ]; then
-                LOG_FILE="$HOME/Library/Logs/neurodeskapp/main.log"
-              else
-                LOG_FILE="$APPDATA/neurodeskapp/logs/main.log"
-              fi
-              if [ -f "$LOG_FILE" ]; then
-                # Extract port and token from app log
-                PORT=$(grep -oE 'ServerApp\.port=[0-9]+' "$LOG_FILE" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-                TOKEN=$(grep -oE 'jlab:srvr:[a-f0-9]+' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-                if [ -n "$PORT" ] && [ -n "$TOKEN" ]; then
-                  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/lab?token=${TOKEN}" 2>/dev/null || echo "000")
-                  if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ] 2>/dev/null; then
-                    echo "TinyRange Jupyter reachable on port $PORT after $((i * 5))s"
-                    CONTAINER="tinyrange-vm"
-                    break
-                  fi
-                fi
-              fi
             fi
 
             echo "Attempt $i: no backend yet - waiting 5s..."
             sleep 5
           done
 
-          if [ -z "$CONTAINER" ] && [ "$ENGINE" != "tinyrange" ]; then
+          if [ -z "$CONTAINER" ]; then
             echo "FAIL: No neurodeskapp container appeared within 30 minutes"
             echo "=== App process status ==="
             ps -p "$APP_PID" -o pid,stat,command 2>/dev/null || echo "App process no longer running"
@@ -433,7 +422,7 @@ jobs:
             exit 1
           fi
 
-          # Verify /data mount (from --working-dir)
+          # Verify /data mount (from the configured default working directory)
           if $ENGINE inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' | grep -q '/data'; then
             echo "PASS: /data mount present (working dir)"
           else
@@ -469,17 +458,38 @@ jobs:
 
           echo "Server failed to start within 5 minutes"
           echo "=== Container/VM logs ==="
-          if [ "${{ matrix.cfg.engine }}" != "tinyrange" ]; then
-            ${{ matrix.cfg.engine }} logs "${{ steps.container.outputs.container }}" 2>&1 || true
-          fi
+          ${{ matrix.cfg.engine }} logs "${{ steps.container.outputs.container }}" 2>&1 || true
           exit 1
-        
+
           sleep 10
 
       # ───────────────────────────────────────────────
       # Container functionality tests
-      # Docker/Podman: docker exec; TinyRange: Jupyter kernel API
+      # Docker/Podman: execute tests inside the app-owned container
       # ───────────────────────────────────────────────
+
+      # The 2026-09-23 image's agent-shell test spiders all of MODULEPATH
+      # with a 60s subprocess deadline. On a cold CVMFS cache, that includes
+      # downloading the remote module catalog. Upstream neurodesktop#979
+      # isolates that test to its fixture, but is not in this release image.
+      # Warm the real catalog with its own bounded network budget; do not
+      # skip the test, retry pytest, or modify the installed image test suite.
+      - name: 'Wait for module catalog readiness (Docker/Podman)'
+        if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
+        timeout-minutes: 6
+        run: |
+          ENGINE="${{ matrix.cfg.engine }}"
+          CONTAINER_NAME=${{ steps.container.outputs.container }}
+          echo 'Warming the module catalog before time-bounded shell tests...'
+          $ENGINE exec -u jovyan "$CONTAINER_NAME" \
+            timeout --signal=TERM --kill-after=10s 300s \
+            bash -lc 'module spider > /tmp/neurodesk-e2e-module-catalog.log 2>&1' || {
+              echo 'FAIL: Module catalog did not become ready within its network budget'
+              $ENGINE exec -u jovyan "$CONTAINER_NAME" \
+                tail -80 /tmp/neurodesk-e2e-module-catalog.log || true
+              exit 1
+            }
+          echo 'PASS: Module catalog is ready'
 
       - name: 'Test: Unit tests inside container via pytest (Docker/Podman)'
         if: matrix.cfg.engine == 'docker' || matrix.cfg.engine == 'podman'
@@ -516,20 +526,6 @@ jobs:
 
           echo 'PASS: All unit tests passed'
 
-      - name: 'Test: Pytest suite via Jupyter kernel (TinyRange)'
-        if: matrix.cfg.engine == 'tinyrange'
-        run: |
-          PORT=${{ steps.container.outputs.port }}
-          TOKEN=${{ steps.container.outputs.token }}
-          BASE_URL="http://127.0.0.1:${PORT}"
-
-          python3 scripts/jupyter_exec.py \
-            --url "$BASE_URL" \
-            --token "$TOKEN" \
-            --pytest /opt/tests/ \
-            --ignore /opt/tests/test_slurm.py \
-            -k "not (test_guac_api_connections or test_guac_login_rejects_legacy_default_password or test_vncserver_binds_localhost_only or test_guac_vnc_tunnel or test_guac_rdp_tunnel or test_nbconvert_can_export_pdf or test_bash_kernel_executes_via_nbconvert or test_bash_kernel_negative_nonexistent_command or test_opencode_shows_litellm or test_opencode_neurodesk_setup or test_opencode_neurodesk_404 or test_opencode_startup_verbose or test_opencode_rejected_neurodesk_key_points or test_opencode_rejected_neurodesk_key_refreshes or test_opencode_reprompts or test_opencode_brain_researcher_mcp_setup_accept or test_opencode_brain_researcher_mcp_setup_decline or test_opencode_brain_researcher_prompt_skipped)"
-
       # ───────────────────────────────────────────────
       # Shutdown test
       # ───────────────────────────────────────────────
@@ -563,19 +559,6 @@ jobs:
             done
             echo "WARN: Container did not stop within 60s after app shutdown"
             echo "This means the app's dispose -> killAllServers -> server.stop chain may not be working"
-            exit 1
-          else
-            # TinyRange: check that the port is no longer listening
-            PORT=${{ steps.container.outputs.port }}
-            for i in $(seq 1 12); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/" 2>/dev/null || true)
-              if [ "$STATUS" = "000" ]; then
-                echo "PASS: TinyRange VM stopped after app shutdown ($((i * 5))s)"
-                exit 0
-              fi
-              sleep 5
-            done
-            echo "WARN: TinyRange port still responding after 60s"
             exit 1
           fi
 
@@ -639,12 +622,6 @@ jobs:
             else
               echo "Docker/Podman daemon not available — skipping container cleanup"
             fi
-          fi
-
-          # Kill any leftover tinyrange/qemu processes
-          if [ "$ENGINE" = "tinyrange" ]; then
-            killall tinyrange 2>/dev/null || true
-            killall qemu-system-x86_64 2>/dev/null || true
           fi
 
           # Clean up test files

@@ -42,7 +42,7 @@ jobs:
 
       - name: Set up Homebrew
         if: steps.release-exists.outputs.result == 'true'
-        uses: Homebrew/actions/setup-homebrew@master
+        uses: Homebrew/actions/setup-homebrew@main
 
       - name: Check if cask exists in homebrew-cask
         if: steps.release-exists.outputs.result == 'true'

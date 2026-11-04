@@ -1,56 +1,41 @@
 {
-  "name": "neurodeskapp",
-  "jlab_version": "4.0.0-1",
-  "version": "2.0.0",
-  "tinyrange_version": "0.4.0",
-  "description": "Neurodesk App",
-  "main": "./build/out/main/main.js",
-  "scripts": {
-    "start": "electron .",
-    "dev": "NODE_ENV=development yarn build && NODE_ENV=development yarn start",
-    "start:windows": "electron . --windows-ui",
-    "start:linux": "electron . --linux-ui",
-    "start:mac": "electron . --mac-ui",
-    "test": "jest",
-    "clean": "rimraf build dist",
-    "watch:tsc": "tsc -w",
-    "watch:assets": "node ./scripts/extract.js && node ./scripts/copyassets.js watch",
-    "watch": "concurrently \"yarn watch:tsc\" \"yarn watch:assets\" ",
-    "build": "tsc && yarn bundle:preload && node ./scripts/extract.js && node ./scripts/copyassets.js",
-    "build:all": "yarn clean && yarn build && yarn start",
-    "bundle:preload": "webpack --config webpack.preload.js",
-    "extract": "node scripts/extract.js",
-    "packdir": "yarn build && electron-builder --dir",
-    "dist": "yarn build && electron-builder",
-    "dist:linux-64": "yarn build && electron-builder --linux --publish never",
-    "dist:linux-arm64": "yarn build && electron-builder --linux --arm64 --publish never",
-    "dist:mac": "yarn build && electron-builder --macos --publish never",
-    "dist:win": "yarn build && electron-builder --win --publish never -c.win.verifyUpdateCodeSignature=false",
-    "dockerdist:linux": "docker run --rm -ti -v ${PWD}:/project -v ${PWD##*/}-node-modules:/project/node_modules -v ~/.electron:/root/.electron electronuserland/builder:wine /bin/bash -c \"yarn && yarn dist:linux\"",
-    "dockerdist:win": "docker run --rm -ti -v ${PWD}:/project -v ${PWD##*/}-node-modules:/project/node_modules -v ~/.electron:/root/.electron electronuserland/builder:wine /bin/bash -c \"yarn && yarn dist:win\"",
-    "create_env_installer:linux": "rimraf ./env_installer/NeurodeskApp*.sh && constructor ./env_installer --platform=linux-64 --output-dir ./env_installer",
-    "create_env_installer:mac": "rimraf ./env_installer/NeurodeskApp*.sh && constructor ./env_installer --platform=osx-64 --output-dir ./env_installer",
-    "create_env_installer:win": "rimraf ./env_installer/NeurodeskApp*.exe && constructor ./env_installer --platform=win-64 --output-dir ./env_installer",
-    "check_version_match": "node scripts/buildutil.js --check-version-match",
-    "set_neurodesk_version": "node scripts/neurodeskutil.js --set-neurodesk-version",
-    "eslint": "eslint --ext .js,.jsx,.ts,.tsx --cache --fix .",
-    "eslint:check": "eslint --ext .js,.jsx,.ts,.tsx --cache .",
-    "eslint:check:typed": "eslint --config .eslintrc.typecheck.js --ext .js,.jsx,.ts,.tsx .",
-    "eslint:typed": "eslint --config .eslintrc.typecheck.js --cache --ext .js,.jsx,.ts,.tsx --fix .",
-    "lint": "yarn && yarn prettier && yarn eslint && yarn stylelint --allow-empty-input",
-    "lint:check": "yarn prettier:check && yarn eslint:check && yarn stylelint:check --allow-empty-input",
-    "prettier": "prettier --write \"**/*{.ts,.tsx,.js,.jsx,.css,.json,.md}\"",
-    "prettier:check": "prettier --check \"**/*{.ts,.tsx,.js,.jsx,.css,.json,.md}\"",
-    "stylelint": "yarn stylelint:check --fix",
-    "stylelint:check": "stylelint \"**/*.css\""
+  "author": {
+    "email": "mail.neurodesk@gmail.com",
+    "name": "University of Queensland",
+    "url": "https://neurodesk.org/"
+  },
+  "bugs": {
+    "url": "https://github.com/scigetorg/neurodesk-app/issues"
   },
   "build": {
+    "afterSign": "scripts/notarize.js",
     "appId": "org.neurodesk.neurodeskapp",
-    "productName": "NeurodeskApp",
     "artifactName": "${productName}.${ext}",
+    "beforePack": "scripts/check-crumblecracker.js",
+    "deb": {
+      "appArmorProfile": "electron-builder-scripts/neurodeskapp.apparmor",
+      "fpm": [
+        "--after-install=build/linux_after_install.sh"
+      ]
+    },
     "directories": {
       "buildResources": "dist-resources"
     },
+    "dmg": {
+      "sign": false
+    },
+    "extraResources": [
+      "env_installer/NeurodeskAppAppServer-*[.sh,.exe]",
+      "build/schemas",
+      {
+        "filter": [
+          "NeurodeskAppX",
+          "NeurodeskAppX.exe"
+        ],
+        "from": "crumblecracker/${arch}",
+        "to": "crumblecracker"
+      }
+    ],
     "fileAssociations": {
       "ext": "ipynb"
     },
@@ -58,56 +43,57 @@
       "!**/*.d.ts",
       "!**/*.js.map",
       "!env_installer/NeurodeskApp*.*",
-      "!tinyrange/**",
-      "!media/**"
+      "!crumblecracker/**",
+      "!media/**",
+      "!.backend-source/**",
+      "!build/cc-*/**"
     ],
-    "extraResources": [
-      "env_installer/NeurodeskAppAppServer-*[.sh,.exe]",
-      "build/schemas"
-    ],
-    "afterSign": "scripts/notarize.js",
     "linux": {
-      "target": [
-        "deb",
-        "rpm"
-      ],
       "category": "Science;Development;",
-      "mimeTypes": [
-        "application/x-ipynb+json"
-      ],
       "extraResources": [
         {
           "from": "dist-resources/linux/neurodeskapp.sh",
           "to": "app/neurodeskapp"
-        },
-        {
-          "from": "tinyrange",
-          "to": "app/tinyrange"
         }
-      ]
-    },
-    "deb": {
-      "appArmorProfile": "electron-builder-scripts/neurodeskapp.apparmor",
-      "fpm": [
-        "--after-install=build/linux_after_install.sh"
-      ]
-    },
-    "win": {
+      ],
+      "mimeTypes": [
+        "application/x-ipynb+json"
+      ],
       "target": [
-        "nsis"
-      ],
-      "extraFiles": [
+        "deb",
+        "rpm"
+      ]
+    },
+    "mac": {
+      "artifactName": "${productName}-${arch}.${ext}",
+      "category": "public.app-category.productivity",
+      "darkModeSupport": true,
+      "entitlements": "build/entitlements.plist",
+      "entitlementsInherit": "build/entitlements.plist",
+      "extraResources": [
         {
-          "from": "dist-resources/win/neurodeskapp.cmd",
-          "to": "neurodeskapp.cmd"
-        },
-        {
-          "from": "tinyrange",
-          "to": "resources/app/tinyrange"
+          "from": "dist-resources/darwin/neurodeskapp.sh",
+          "to": "app/neurodeskapp"
         }
       ],
-      "icon": "dist-resources/icon.ico"
+      "gatekeeperAssess": false,
+      "hardenedRuntime": true,
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
+    "nsis": {
+      "artifactName": "${productName}-Setup.${ext}",
+      "include": "build/wininstall.nsh",
+      "installerSidebar": "installerSidebar.bmp",
+      "language": "1033",
+      "license": "LICENSE",
+      "oneClick": true,
+      "perMachine": false,
+      "warningsAsErrors": false
+    },
+    "productName": "NeurodeskApp",
     "rpm": {
       "appArmorProfile": "electron-builder-scripts/neurodeskapp.apparmor",
       "depends": [
@@ -117,73 +103,36 @@
         "--after-install=build/linux_after_install.sh"
       ]
     },
-    "nsis": {
-      "oneClick": true,
-      "artifactName": "${productName}-Setup.${ext}",
-      "perMachine": false,
-      "license": "LICENSE",
-      "language": "1033",
-      "installerSidebar": "installerSidebar.bmp",
-      "include": "build/wininstall.nsh",
-      "warningsAsErrors": false
-    },
-    "mac": {
-      "category": "public.app-category.productivity",
-      "target": [
+    "win": {
+      "extraFiles": [
         {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "from": "dist-resources/win/neurodeskapp.cmd",
+          "to": "neurodeskapp.cmd"
         }
       ],
-      "entitlements": "build/entitlements.plist",
-      "entitlementsInherit": "build/entitlements.plist",
-      "darkModeSupport": true,
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "artifactName": "${productName}-${arch}.${ext}",
-      "extraResources": [
-        {
-          "from": "dist-resources/darwin/neurodeskapp.sh",
-          "to": "app/neurodeskapp"
-        },
-        {
-          "from": "tinyrange",
-          "filter": [
-            "!**/tinyqemu/{qemu-system-aarch64,qemu-system-x86_64}"
-          ],
-          "to": "app/tinyrange"
-        }
+      "icon": "dist-resources/icon.ico",
+      "target": [
+        "nsis"
       ]
-    },
-    "dmg": {
-      "sign": false
     }
   },
-  "author": {
-    "name": "University of Queensland",
-    "email": "mail.neurodesk@gmail.com",
-    "url": "https://neurodesk.org/"
+  "dependencies": {
+    "@lumino/signaling": "^2.1.2",
+    "ejs": "^5.0.1",
+    "electron-log": "^4.4.8",
+    "fast-xml-parser": "^5.7.0",
+    "fix-path": "^3.0.0",
+    "js-yaml": "^4.3.2",
+    "posthog-node": "^5.47.3",
+    "semver": "^7.5.2",
+    "update-electron-app": "^2.0.1",
+    "which": "^2.0.2",
+    "winreg": "^1.2.4",
+    "yargs": "^17.6.2"
   },
-  "bugs": {
-    "url": "https://github.com/NeuroDesk/neurodesk-app/issues"
-  },
-  "homepage": "https://github.com/NeuroDesk/neurodesk-app#readme",
-  "repository": "https://github.com/NeuroDesk/neurodesk-app",
-  "license": "BSD-3-Clause",
-  "engines": {
-    "node": ">=22.12.0"
-  },
+  "description": "Neurodesk App",
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@jupyter-notebook/web-components": "0.9.1",
     "@types/ejs": "^3.1.0",
     "@types/jest": "^30.0.0",
@@ -195,9 +144,8 @@
     "@types/yargs": "^17.0.18",
     "@typescript-eslint/eslint-plugin": "~5.28.0",
     "@typescript-eslint/parser": "~5.28.0",
-    "@electron/notarize": "^3.1.1",
     "electron": "^43.3.0",
-    "electron-builder": "^26.0.7",
+    "electron-builder": "^26.16.1",
     "eslint": "~8.17.0",
     "eslint-config-prettier": "~8.5.0",
     "eslint-plugin-prettier": "~4.0.0",
@@ -219,18 +167,53 @@
     "webpack": "^5.109.2",
     "webpack-cli": "^4.5.0"
   },
-  "dependencies": {
-    "@lumino/signaling": "^2.1.2",
-    "ejs": "^5.0.1",
-    "electron-log": "^4.4.8",
-    "fast-xml-parser": "^5.7.0",
-    "fix-path": "^3.0.0",
-    "js-yaml": "^4.3.2",
-    "semver": "^7.5.2",
-    "toml": "^3.0.0",
-    "update-electron-app": "^2.0.1",
-    "which": "^2.0.2",
-    "winreg": "^1.2.4",
-    "yargs": "^17.6.2"
-  }
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "homepage": "https://github.com/scigetorg/neurodesk-app#readme",
+  "jlab_version": "4.0.0-1",
+  "license": "BSD-3-Clause",
+  "main": "./build/out/main/main.js",
+  "name": "neurodeskapp",
+  "packageManager": "yarn@1.22.22",
+  "repository": "https://github.com/scigetorg/neurodesk-app",
+  "scripts": {
+    "build": "tsc && yarn bundle:preload && node ./scripts/extract.js && node ./scripts/copyassets.js",
+    "build:all": "yarn clean && yarn build && yarn start",
+    "bundle:preload": "webpack --config webpack.preload.js",
+    "check_version_match": "node scripts/buildutil.js --check-version-match",
+    "clean": "rimraf build dist",
+    "create_env_installer:linux": "rimraf ./env_installer/NeurodeskApp*.sh && constructor ./env_installer --platform=linux-64 --output-dir ./env_installer",
+    "create_env_installer:mac": "rimraf ./env_installer/NeurodeskApp*.sh && constructor ./env_installer --platform=osx-64 --output-dir ./env_installer",
+    "create_env_installer:win": "rimraf ./env_installer/NeurodeskApp*.exe && constructor ./env_installer --platform=win-64 --output-dir ./env_installer",
+    "dev": "NODE_ENV=development yarn build && NODE_ENV=development yarn start",
+    "dist": "yarn build && electron-builder",
+    "dist:linux-64": "yarn build && electron-builder --linux --publish never",
+    "dist:linux-arm64": "yarn build && electron-builder --linux --arm64 --publish never",
+    "dist:mac": "yarn build && electron-builder --macos --publish never",
+    "dist:win": "yarn build && electron-builder --win --publish never -c.win.verifyUpdateCodeSignature=false",
+    "dockerdist:linux": "docker run --rm -ti -v ${PWD}:/project -v ${PWD##*/}-node-modules:/project/node_modules -v ~/.electron:/root/.electron electronuserland/builder:wine /bin/bash -c \"yarn && yarn dist:linux\"",
+    "dockerdist:win": "docker run --rm -ti -v ${PWD}:/project -v ${PWD##*/}-node-modules:/project/node_modules -v ~/.electron:/root/.electron electronuserland/builder:wine /bin/bash -c \"yarn && yarn dist:win\"",
+    "eslint": "eslint --ext .js,.jsx,.ts,.tsx --cache --fix .",
+    "eslint:check": "eslint --ext .js,.jsx,.ts,.tsx --cache .",
+    "eslint:check:typed": "eslint --config .eslintrc.typecheck.js --ext .js,.jsx,.ts,.tsx .",
+    "eslint:typed": "eslint --config .eslintrc.typecheck.js --cache --ext .js,.jsx,.ts,.tsx --fix .",
+    "extract": "node scripts/extract.js",
+    "lint": "yarn && yarn prettier && yarn eslint && yarn stylelint --allow-empty-input",
+    "lint:check": "yarn prettier:check && yarn eslint:check && yarn stylelint:check --allow-empty-input",
+    "packdir": "yarn build && electron-builder --dir",
+    "prettier": "prettier --write \"**/*{.ts,.tsx,.js,.jsx,.css,.json,.md}\"",
+    "prettier:check": "prettier --check \"**/*{.ts,.tsx,.js,.jsx,.css,.json,.md}\"",
+    "start": "electron .",
+    "start:linux": "electron . --linux-ui",
+    "start:mac": "electron . --mac-ui",
+    "start:windows": "electron . --windows-ui",
+    "stylelint": "yarn stylelint:check --fix",
+    "stylelint:check": "stylelint \"**/*.css\"",
+    "test": "jest",
+    "watch": "concurrently \"yarn watch:tsc\" \"yarn watch:assets\" ",
+    "watch:assets": "node ./scripts/extract.js && node ./scripts/copyassets.js watch",
+    "watch:tsc": "tsc -w"
+  },
+  "version": "2.1.0"
 }
