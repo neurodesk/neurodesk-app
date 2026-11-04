@@ -965,8 +965,12 @@ export class JupyterServer {
             (error, _stdout, stderr) => {
               if (
                 error &&
-                (error.killed || error.signal || error.code === 'ENOENT' ||
-                !/no such container|no container with name or ID/i.test(stderr))
+                (error.killed ||
+                  error.signal ||
+                  error.code === 'ENOENT' ||
+                  !/no such container|no container with name or ID/i.test(
+                    stderr
+                  ))
               ) {
                 reject(error);
               } else {
