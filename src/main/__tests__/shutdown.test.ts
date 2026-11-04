@@ -81,3 +81,19 @@ describe('shutdown ownership', () => {
     expect(close).toHaveBeenCalledTimes(3);
   });
 });
+
+describe('window close event boundary', () => {
+  it('handles disposal rejection in the registered close listener', async () => {
+    const instance = Object.create(SessionWindow.prototype);
+    const on = jest.fn();
+    instance._window = { on };
+    instance._evm = { registerEventHandler: jest.fn() };
+    instance.dispose = jest
+      .fn()
+      .mockRejectedValue(new Error('daemon unavailable'));
+    instance._registerListeners();
+    const close = on.mock.calls.find(call => call[0] === 'close')[1];
+    await expect(close()).resolves.toBeUndefined();
+    expect(instance.dispose).toHaveBeenCalledTimes(1);
+  });
+});

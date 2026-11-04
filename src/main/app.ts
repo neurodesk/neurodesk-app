@@ -70,7 +70,7 @@ interface IClearHistoryOptions {
 const minimumWindowSpacing = 15;
 const windowSpacing = 30;
 
-class SessionWindowManager implements IDisposable {
+export class SessionWindowManager implements IDisposable {
   constructor(options: SessionWindowManager.IOptions) {
     this._options = options;
   }
@@ -175,11 +175,18 @@ class SessionWindowManager implements IDisposable {
 
     window.sessionConfigChanged.connect(this.syncSessionData, this);
 
-    window.window.on('close', async event => {
-      const index = this._windows.indexOf(window);
-      if (index !== -1) {
+    window.window.on('close', async () => {
+      if (this._windows.includes(window)) {
         window.sessionConfigChanged.disconnect(this.syncSessionData, this);
-        await window.dispose();
+        try {
+          await window.dispose();
+        } catch (error) {
+          log.error('Failed to dispose closing window', error);
+        }
+        const index = this._windows.indexOf(window);
+        if (index === -1) {
+          return;
+        }
         this._windows.splice(index, 1);
         this.syncSessionData();
 
@@ -227,7 +234,7 @@ class SessionWindowManager implements IDisposable {
   private _windows: SessionWindow[] = [];
 }
 
-namespace SessionWindowManager {
+export namespace SessionWindowManager {
   export interface IOptions {
     app: JupyterApplication;
     serverFactory: IServerFactory;

@@ -1,6 +1,7 @@
-import log from 'electron-log';
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
+
+import log from 'electron-log';
 
 import {
   BrowserWindow,
@@ -417,7 +418,11 @@ export class SessionWindow implements IDisposable {
 
   private _registerListeners() {
     this._window.on('close', async () => {
-      await this.dispose();
+      try {
+        await this.dispose();
+      } catch (error) {
+        log.error('Failed to dispose closing window', error);
+      }
     });
 
     this._evm.registerEventHandler(
