@@ -1,6 +1,8 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
+import log from 'electron-log';
+
 import {
   BrowserWindow,
   dialog,
@@ -223,14 +225,17 @@ export class SessionWindow implements IDisposable {
         return;
       }
 
-      await this._server.server.stop();
-      this._server = null;
-      if (this._labView) {
-        if (!this._window.isDestroyed()) {
-          this._window.contentView.removeChildView(this._labView.view);
+      try {
+        await this._server.server.stop();
+      } finally {
+        this._server = null;
+        if (this._labView) {
+          if (!this._window.isDestroyed()) {
+            this._window.contentView.removeChildView(this._labView.view);
+          }
+          this._labView.dispose();
+          this._labView = null;
         }
-        this._labView.dispose();
-        this._labView = null;
       }
     }
   }
@@ -240,10 +245,16 @@ export class SessionWindow implements IDisposable {
       return this._disposePromise;
     }
 
-    this._disposePromise = new Promise<void>(resolve => {
-      this._evm.dispose();
-
-      this._disposeSession().then(() => {
+    this._disposePromise = Promise.resolve()
+      .then(() => {
+        this._evm.dispose();
+        return this._disposeSession();
+      })
+      .catch(error => {
+        log.error('Failed to stop session', error);
+        throw error;
+      })
+      .finally(() => {
         // _disposeSession only closes the labView. The persistent titlebar and
         // progress views (and a still-mounted welcome view) keep their
         // renderers alive on window close (electron/electron#42884), so close
@@ -256,11 +267,7 @@ export class SessionWindow implements IDisposable {
         closeIfAlive(this._titleBarView?.view?.webContents);
         closeIfAlive(this._progressView?.view?.view?.webContents);
         closeIfAlive(this._welcomeView?.view?.webContents);
-
-        this._disposePromise = null;
-        resolve();
       });
-    });
 
     return this._disposePromise;
   }
@@ -411,7 +418,11 @@ export class SessionWindow implements IDisposable {
 
   private _registerListeners() {
     this._window.on('close', async () => {
-      await this.dispose();
+      try {
+        await this.dispose();
+      } catch (error) {
+        log.error('Failed to dispose closing window', error);
+      }
     });
 
     this._evm.registerEventHandler(
@@ -896,21 +907,28 @@ export class SessionWindow implements IDisposable {
       }
     }
 
-    this._disposeSession().then(() => {
-      this._createSessionForLocal(
-        sessionConfig.workingDirectory,
-        sessionConfig.filesToOpen
-      ).catch(error => {
-        this._setProgress(
-          'Failed to create session',
-          `<div class="message-row">${error}</div>
+    this._disposeSession()
+      .catch(error => {
+        log.error('Failed to stop session', error);
+        dialog.showErrorBox('Failed to stop session', String(error));
+        throw error;
+      })
+      .then(() => {
+        this._createSessionForLocal(
+          sessionConfig.workingDirectory,
+          sessionConfig.filesToOpen
+        ).catch(error => {
+          this._setProgress(
+            'Failed to create session',
+            `<div class="message-row">${error}</div>
           <div class="message-row">
             <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
           </div>`,
-          false
-        );
-      });
-    });
+            false
+          );
+        });
+      })
+      .catch(() => undefined);
   }
 
   handleOpenFilesOrFolders(fileOrFolders?: string[]) {
@@ -938,21 +956,28 @@ export class SessionWindow implements IDisposable {
         }
       }
 
-      this._disposeSession().then(() => {
-        this._createSessionForLocal(
-          sessionConfig.workingDirectory,
-          sessionConfig.filesToOpen
-        ).catch(error => {
-          this._setProgress(
-            'Failed to create session',
-            `<div class="message-row">${error}</div>
+      this._disposeSession()
+        .catch(error => {
+          log.error('Failed to stop session', error);
+          dialog.showErrorBox('Failed to stop session', String(error));
+          throw error;
+        })
+        .then(() => {
+          this._createSessionForLocal(
+            sessionConfig.workingDirectory,
+            sessionConfig.filesToOpen
+          ).catch(error => {
+            this._setProgress(
+              'Failed to create session',
+              `<div class="message-row">${error}</div>
             <div class="message-row">
               <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowWelcomeView}')">Go to Welcome Page</a>
             </div>`,
-            false
-          );
-        });
-      });
+              false
+            );
+          });
+        })
+        .catch(() => undefined);
     }
   }
 
@@ -1045,10 +1070,17 @@ export class SessionWindow implements IDisposable {
       this._updateContentView();
     };
 
-    this._disposeSession().then(() => {
-      showWelcome();
-      this._sessionConfigChanged.emit();
-    });
+    this._disposeSession()
+      .catch(error => {
+        log.error('Failed to stop session', error);
+        dialog.showErrorBox('Failed to stop session', String(error));
+        throw error;
+      })
+      .then(() => {
+        showWelcome();
+        this._sessionConfigChanged.emit();
+      })
+      .catch(() => undefined);
   }
 
   private async _handleFileOrFolderOpenSession(

@@ -9,7 +9,7 @@ import * as path from 'path';
 import { request as httpRequest } from 'http';
 import { request as httpsRequest } from 'https';
 import { IDisposable } from './tokens';
-import { getFreePort, getUserDataDir, waitForDuration } from './utils';
+import { getFreePort, getUserDataDir } from './utils';
 
 export const SERVER_TOKEN_PREFIX = 'jlab:srvr:';
 import {
@@ -956,11 +956,30 @@ export class JupyterServer {
 
     this._stopServer = (async () => {
       if (this._nbServer !== undefined) {
-        execFile(this._info.engine, ['rm', '-f', this._info.containerName]);
         this._nbServer.kill();
-        await this._shutdownServer();
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            this._info.engine,
+            ['rm', '-f', this._info.containerName],
+            { timeout: 10000 },
+            (error, _stdout, stderr) => {
+              if (
+                error &&
+                (error.killed ||
+                  error.signal ||
+                  error.code === 'ENOENT' ||
+                  !/no such container|no container with name or ID/i.test(
+                    stderr
+                  ))
+              ) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            }
+          );
+        });
       }
-      this._stopping = false;
     })();
     return this._stopServer;
   }
@@ -986,6 +1005,9 @@ export class JupyterServer {
   }
 
   private _serverStartFailed(): void {
+    if (this._stopping) {
+      return;
+    }
     this._cleanupListeners();
     // Kill the child process (launch script running docker logs -f)
     if (this._nbServer && !this._nbServer.killed) {
@@ -1013,69 +1035,6 @@ export class JupyterServer {
     this._nbServer.removeAllListeners();
     this._nbServer.stderr?.removeAllListeners();
     this._nbServer.stdout?.removeAllListeners();
-  }
-
-  private _callShutdownAPI(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const req = httpRequest(
-        `${this._info.url.origin}/api/shutdown?_xsrf=${this._info.token}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `token ${this._info.token}`
-          }
-        },
-        r => {
-          if (r.statusCode == 200) {
-            resolve();
-          } else {
-            reject(`Server failed to shutdown. Response code: ${r.statusCode}`);
-          }
-        }
-      );
-      req.on('error', err => {
-        reject(err);
-      });
-      req.end();
-    });
-  }
-
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore kept as dead code for potential future reuse
-  private _shutdownServer(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      this._callShutdownAPI()
-        .then(() => {
-          resolve();
-        })
-        .catch(error => {
-          // if no connection, it is possible that server was not up yet
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          if (error.code === 'ECONNREFUSED') {
-            log.info(
-              'Server not up yet, waiting for it to start...',
-              error.code
-            );
-            Promise.race([
-              waitUntilServerIsUp(this._info.url),
-              waitForDuration(SERVER_LAUNCH_TIMEOUT)
-            ]).then((up: boolean) => {
-              if (up) {
-                this._callShutdownAPI()
-                  .then(() => {
-                    resolve();
-                  })
-                  .catch(reject);
-              } else {
-                reject();
-              }
-            });
-          } else {
-            reject(error);
-          }
-        });
-    });
   }
 
   private _generateToken() {
