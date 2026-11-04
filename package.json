@@ -118,11 +118,11 @@
   },
   "dependencies": {
     "@lumino/signaling": "^2.1.2",
-    "ejs": "^5.0.1",
+    "ejs": "^5.0.2",
     "electron-log": "^4.4.8",
     "fast-xml-parser": "^5.7.0",
     "fix-path": "^3.0.0",
-    "js-yaml": "^4.3.2",
+    "js-yaml": "^5.2.2",
     "posthog-node": "^5.47.3",
     "semver": "^7.5.2",
     "update-electron-app": "^2.0.1",
