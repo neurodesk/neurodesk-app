@@ -480,10 +480,16 @@ jobs:
         run: |
           ENGINE="${{ matrix.cfg.engine }}"
           CONTAINER_NAME=${{ steps.container.outputs.container }}
+          # Login shells use a different MODULEPATH; warm the test's agent initializer.
           echo 'Warming the module catalog before time-bounded shell tests...'
           $ENGINE exec -u jovyan "$CONTAINER_NAME" \
             timeout --signal=TERM --kill-after=10s 300s \
-            bash -lc 'module spider > /tmp/neurodesk-e2e-module-catalog.log 2>&1' || {
+            /bin/sh -c '
+              env -i PATH="$PATH" HOME="$HOME" USER=jovyan TERM=dumb /bin/sh -c '\''
+                . /opt/neurodesktop/agent_shell_setup.sh
+                exec bash --noprofile --norc -c "module spider > /tmp/neurodesk-e2e-module-catalog.log 2>&1"
+              '\''
+            ' || {
               echo 'FAIL: Module catalog did not become ready within its network budget'
               $ENGINE exec -u jovyan "$CONTAINER_NAME" \
                 tail -80 /tmp/neurodesk-e2e-module-catalog.log || true
