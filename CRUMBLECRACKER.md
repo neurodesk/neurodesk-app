@@ -70,3 +70,5 @@ the launcher; GPU mode opens it from the top bar. An optional fourth argument
 selects an existing `build/cc-*` test directory for a same-candidate retry; do not
 reuse one while its previous process is running. Reports describe the requested
 rendering mode, not the directory name. No normal user profile is reused.
+
+The backend commit in `.github/actions/build-crumblecracker/action.yml` is updated manually. Renovate does not advance this source pin; update it with the bundled-backend build and end-to-end checks.

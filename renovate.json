@@ -35,12 +35,6 @@
       "groupName": "node runtime"
     },
     {
-      "description": "Python for the workflow helper scripts.",
-      "matchManagers": ["github-actions"],
-      "matchDepNames": ["python"],
-      "groupName": "python runtime"
-    },
-    {
       "description": "Major npm updates usually need code changes (Electron especially); approve them from the dashboard.",
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["major"],
@@ -95,15 +89,6 @@
       ]
     },
     {
-      "description": "TinyRange is the VM engine shipped inside the macOS/Windows installers.",
-      "matchDepNames": ["tinyrange/tinyrange"],
-      "dependencyDashboardApproval": true,
-      "addLabels": ["enhancement"],
-      "prBodyNotes": [
-        "> [!WARNING]\n> TinyRange is bundled in every installer. Confirm the release still ships tinyrange-{darwin-arm64,linux-amd64,linux-arm64,windows-amd64}.zip and run the e2e workflow on macOS before merging."
-      ]
-    },
-    {
       "description": "Supply-chain guard: let new npm releases age three days before proposing them.",
       "matchDatasources": ["npm"],
       "minimumReleaseAge": "3 days"
@@ -113,24 +98,13 @@
     {
       "description": "Default Neurodesktop image the app launches, tracked to stable GitHub releases exactly as neurodesk.github.io does (replaces the broken sync_release.yml lookup).",
       "customType": "regex",
-      "managerFilePatterns": ["/^neurodesktop\\.toml$/"],
+      "managerFilePatterns": ["/^container_installer/neurodesk\\.yml$/"],
       "matchStrings": [
-        "jupyter_neurodesk_version\\s*=\\s*\"(?<currentValue>\\d{4}-\\d{2}-\\d{2})\""
+        "defaultVersion:\\s*\"(?<currentValue>\\d{4}-\\d{2}-\\d{2})\""
       ],
       "depNameTemplate": "neurodesk/neurodesktop",
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "regex:^(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})$"
-    },
-    {
-      "description": "TinyRange release bundled into every installer (publish.yml) and used by the e2e test.",
-      "customType": "regex",
-      "managerFilePatterns": ["/^package\\.json$/"],
-      "matchStrings": [
-        "\"tinyrange_version\": \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
-      ],
-      "depNameTemplate": "tinyrange/tinyrange",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v(?<version>\\d+\\.\\d+\\.\\d+)$"
     }
   ],
   "vulnerabilityAlerts": {
