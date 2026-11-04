@@ -965,7 +965,8 @@ export class JupyterServer {
             (error, _stdout, stderr) => {
               if (
                 error &&
-                !/no such container|no container with name or ID/i.test(stderr)
+                (error.killed || error.signal || error.code === 'ENOENT' ||
+                !/no such container|no container with name or ID/i.test(stderr))
               ) {
                 reject(error);
               } else {
@@ -1000,6 +1001,9 @@ export class JupyterServer {
   }
 
   private _serverStartFailed(): void {
+    if (this._stopping) {
+      return;
+    }
     this._cleanupListeners();
     // Kill the child process (launch script running docker logs -f)
     if (this._nbServer && !this._nbServer.killed) {
