@@ -15,12 +15,73 @@ The script:
 """
 import argparse
 import json
+import struct
 import sys
 import time
 import uuid
 
 import requests
 import websocket  # websocket-client
+
+
+V1_PROTOCOL = 'v1.kernel.websocket.jupyter.org'
+
+
+def _decode_msg(raw):
+    """Decode either Jupyter's JSON frames or its binary WebSocket frames."""
+    if isinstance(raw, str):
+        return json.loads(raw), 'legacy'
+
+    # The v1 protocol has a little-endian 64-bit offset table. Its first
+    # payload starts at byte 56 for messages without binary buffers. Passing
+    # the whole frame to json.loads produces the misleading utf-32-le error.
+    if len(raw) >= 56:
+        count = int.from_bytes(raw[:8], 'little')
+        if 6 <= count <= len(raw) // 8 - 1:
+            offsets = struct.unpack_from('<' + 'Q' * count, raw, 8)
+            if (
+                offsets[0] == 8 * (count + 1)
+                and offsets[-1] == len(raw)
+                and list(offsets) == sorted(offsets)
+            ):
+                message = {
+                    'channel': raw[offsets[0]:offsets[1]].decode('utf-8'),
+                    'header': json.loads(raw[offsets[1]:offsets[2]]),
+                    'parent_header': json.loads(raw[offsets[2]:offsets[3]]),
+                    'metadata': json.loads(raw[offsets[3]:offsets[4]]),
+                    'content': json.loads(raw[offsets[4]:offsets[5]]),
+                }
+                return message, V1_PROTOCOL
+
+    # The legacy protocol sends binary frames when a kernel message carries
+    # buffers. The first buffer in its big-endian offset table is UTF-8 JSON.
+    if len(raw) >= 8:
+        count = int.from_bytes(raw[:4], 'big')
+        if 1 <= count <= len(raw) // 4 - 1:
+            offsets = struct.unpack_from('!' + 'I' * count, raw, 4)
+            if (
+                offsets[0] == 4 * (count + 1)
+                and offsets[-1] <= len(raw)
+                and list(offsets) == sorted(offsets)
+            ):
+                end = offsets[1] if count > 1 else len(raw)
+                return json.loads(raw[offsets[0]:end].decode('utf-8')), 'legacy'
+
+    raise ValueError('Unrecognized Jupyter WebSocket binary frame')
+
+
+def _encode_v1_msg(message):
+    """Encode an outgoing kernel message using Jupyter's v1 wire format."""
+    parts = [message['channel'].encode('utf-8')]
+    parts.extend(
+        json.dumps(message[key]).encode('utf-8')
+        for key in ('header', 'parent_header', 'metadata', 'content')
+    )
+    offsets = [8 * (len(parts) + 2)]
+    for part in parts:
+        offsets.append(offsets[-1] + len(part))
+    header = struct.pack('<' + 'Q' * (len(offsets) + 1), len(offsets), *offsets)
+    return header + b''.join(parts)
 
 
 def _make_msg(msg_type, content, session):
@@ -39,7 +100,7 @@ def _make_msg(msg_type, content, session):
     }
 
 
-def run(url, token, code, timeout=1800, quiet_on_success=False):
+def run(url, token, code, timeout=3600, quiet_on_success=False):
     headers = {'Authorization': f'token {token}'}
 
     for attempt in range(3):
@@ -93,6 +154,7 @@ def run(url, token, code, timeout=1800, quiet_on_success=False):
         try:
             # Wait for kernel to reach idle state via WebSocket iopub
             deadline = time.time() + 120
+            wire_protocol = 'legacy'
             ws.settimeout(5)
             while time.time() < deadline:
                 try:
@@ -101,7 +163,9 @@ def run(url, token, code, timeout=1800, quiet_on_success=False):
                     continue
                 if not raw:
                     continue
-                m = json.loads(raw)
+                m, frame_protocol = _decode_msg(raw)
+                if frame_protocol == V1_PROTOCOL:
+                    wire_protocol = V1_PROTOCOL
                 mtype = m.get('header', {}).get('msg_type')
                 content = m.get('content', {})
                 if (
@@ -109,7 +173,7 @@ def run(url, token, code, timeout=1800, quiet_on_success=False):
                     and content.get('execution_state') == 'idle'
                 ):
                     print(
-                        '[jupyter_exec] kernel is idle, sending code',
+                        f'[jupyter_exec] kernel is idle, sending code ({wire_protocol})',
                         file=sys.stderr,
                         flush=True
                     )
@@ -135,7 +199,10 @@ def run(url, token, code, timeout=1800, quiet_on_success=False):
                 session
             )
             my_msg_id = msg['header']['msg_id']
-            ws.send(json.dumps(msg))
+            if wire_protocol == V1_PROTOCOL:
+                ws.send_binary(_encode_v1_msg(msg))
+            else:
+                ws.send(json.dumps(msg))
 
             exit_code = None
             finished = False
@@ -148,7 +215,7 @@ def run(url, token, code, timeout=1800, quiet_on_success=False):
                     continue
                 if not raw:
                     continue
-                m = json.loads(raw)
+                m, _ = _decode_msg(raw)
                 if m.get('parent_header', {}).get('msg_id') != my_msg_id:
                     continue
                 mtype = m.get('header', {}).get('msg_type')
@@ -232,7 +299,7 @@ def main():
     ap.add_argument(
         '--timeout',
         type=int,
-        default=1800,
+        default=3600,
         help='Per-execution timeout in seconds'
     )
     ap.add_argument(
@@ -266,7 +333,9 @@ def main():
             'import os, subprocess, sys\n'
             'os.umask(0)\n'
             'subprocess.run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", "/home/jovyan/.cache"], check=False)\n'
-            'subprocess.run(["sudo", "find", "/neurodesktop-storage", "-not", "-type", "s", "-exec", "chmod", "777", "{}", "+"], check=False)\n'
+            'storage_mount = os.environ.get("NEURODESK_STORAGE_MOUNT")\n'
+            'if storage_mount:\n'
+            '    subprocess.run(["sudo", "find", "/" + storage_mount, "-not", "-type", "s", "-exec", "chmod", "777", "{}", "+"], check=False)\n'
             '# Monkey-patch os.makedirs: 9p/virtfs ignores guest umask,\n'
             '# so newly created dirs may lack write permission.\n'
             '_orig_makedirs = os.makedirs\n'

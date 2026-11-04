@@ -202,34 +202,6 @@ export async function waitForFunction(
   });
 }
 
-export class Config {
-  static loadConfig(
-    configDir: string,
-    configFileName: string = this.defaultFileName()
-  ): Config {
-    const location = path.join(configDir, configFileName);
-    console.debug(`Loading config from ${location}...`);
-    const config = this.loadConfigFromFile(location);
-    return config;
-  }
-
-  static loadConfigFromFile(location: string): Config {
-    const toml = require('toml');
-    const data = fs.readFileSync(location);
-    const tomlData = toml.parse(data);
-    return new Config(tomlData);
-  }
-
-  static defaultFileName(): string {
-    return 'neurodesktop.toml';
-  }
-
-  public ConfigToml: any;
-
-  constructor(configToml: any) {
-    this.ConfigToml = configToml;
-  }
-}
 // remove alpha / beta suffixes
 export function versionWithoutSuffix(version: string) {
   return `${semver.major(version, { loose: true })}.${semver.minor(version, {

@@ -63,11 +63,9 @@ For instructions on updating bundled Neurodesk packages and cutting a new releas
 
 ## Neurodesk
 
-The client pull Jupyter Neurodesk image with `jupyter_neurodesk_version` tag in neurodesktop.toml.
+The client fetches available Jupyter Neurodesk image versions from the `releaseHistoryUrl` in `container_installer/neurodesk.yml`. The newest release is used for a new local session, and the version menu lists all available releases.
 
-Image tag is updated on schedule by Github Action with PR.
-
-Update Release version by changing `neurodesk_desktop_release` in neurodesktop.toml.
+The YAML `defaultVersion` is used when the release history cannot be fetched.
 
 ## Update logo
 

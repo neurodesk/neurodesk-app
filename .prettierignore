@@ -9,3 +9,7 @@
 # ms IDE stuff
 .history/
 .vscode/
+
+# Native backend build inputs and payloads
+.backend-source/
+crumblecracker/

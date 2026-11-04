@@ -2,24 +2,88 @@
 // Distributed under the terms of the Modified BSD License.
 
 import { WebContentsView } from 'electron';
-import { DarkThemeBGColor, getUserHomeDir, LightThemeBGColor } from '../utils';
+import { DarkThemeBGColor, LightThemeBGColor } from '../utils';
 import * as path from 'path';
 import * as fs from 'fs';
-import { appData } from '../config/appdata';
 import { EventTypeRenderer } from '../eventtypes';
+import { ContainerConfig } from '../config/containerConfigParser';
+import * as yaml from 'js-yaml';
 
-const maxRecentItems = 5;
+interface IMiniApp {
+  id: string;
+  title: string;
+  description: string;
+  defaultVersion?: string;
+  registry?: string;
+  releaseHistoryUrl?: string;
+  remoteUrl?: string[];
+  tags?: string[];
+}
 
-interface IRecentSessionListItem {
-  isRemote: boolean;
-  linkLabel: string;
-  linkTooltip: string;
-  linkDetail?: string;
+// Function to read container installer YAML files and create mini apps
+function loadMiniAppsFromContainerInstaller(): IMiniApp[] {
+  const containerConfigDir = path.join(__dirname, '../../container_installer');
+  const miniApps: IMiniApp[] = [];
+
+  try {
+    const files = fs.readdirSync(containerConfigDir);
+    const yamlFiles = files.filter(
+      file => file.endsWith('.yml') || file.endsWith('.yaml')
+    );
+
+    for (const yamlFile of yamlFiles) {
+      try {
+        const filePath = path.join(containerConfigDir, yamlFile);
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        const config = yaml.load(fileContent) as ContainerConfig;
+
+        if (config && config.title && config.description) {
+          const app: IMiniApp = {
+            id: config.title.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+            title: config.title,
+            description: config.description.trim(),
+            remoteUrl: config.remoteUrl || []
+          };
+
+          if (config.defaultVersion) {
+            const version = config.defaultVersion;
+            try {
+              if (
+                version &&
+                typeof version === 'object' &&
+                typeof (version as any).toISOString === 'function'
+              ) {
+                app.defaultVersion = (version as any)
+                  .toISOString()
+                  .split('T')[0];
+              } else {
+                app.defaultVersion = String(version);
+              }
+            } catch {
+              app.defaultVersion = String(version);
+            }
+          }
+          if (config.registry) app.registry = config.registry;
+          if (config.releaseHistoryUrl)
+            app.releaseHistoryUrl = config.releaseHistoryUrl;
+          if (config.remoteUrl) app.remoteUrl = config.remoteUrl;
+          if (config.tags) app.tags = config.tags;
+
+          miniApps.push(app);
+        }
+      } catch (error) {
+        console.error(`Error reading YAML file ${yamlFile}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('Error reading container installer directory:', error);
+  }
+
+  return miniApps;
 }
 
 export class WelcomeView {
   constructor(options: WelcomeView.IOptions) {
-    // this._registry = options.registry;
     this._isDarkTheme = options.isDarkTheme;
     this._view = new WebContentsView({
       webPreferences: {
@@ -35,19 +99,14 @@ export class WelcomeView {
     const neurodeskLogo = fs.readFileSync(
       path.join(__dirname, '../../../app-assets/neurodesk.svg')
     );
-    const neurodeskIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Pro 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2023 Fonticons, Inc. --><path d="M184 0c30.9 0 56 25.1 56 56V456c0 30.9-25.1 56-56 56c-28.9 0-52.7-21.9-55.7-50.1c-5.2 1.4-10.7 2.1-16.3 2.1c-35.3 0-64-28.7-64-64c0-7.4 1.3-14.6 3.6-21.2C21.4 367.4 0 338.2 0 304c0-31.9 18.7-59.5 45.8-72.3C37.1 220.8 32 207 32 192c0-30.7 21.6-56.3 50.4-62.6C80.8 123.9 80 118 80 112c0-29.9 20.6-55.1 48.3-62.1C131.3 21.9 155.1 0 184 0zM328 0c28.9 0 52.6 21.9 55.7 49.9c27.8 7 48.3 32.1 48.3 62.1c0 6-.8 11.9-2.4 17.4c28.8 6.2 50.4 31.9 50.4 62.6c0 15-5.1 28.8-13.8 39.7C493.3 244.5 512 272.1 512 304c0 34.2-21.4 63.4-51.6 74.8c2.3 6.6 3.6 13.8 3.6 21.2c0 35.3-28.7 64-64 64c-5.6 0-11.1-.7-16.3-2.1c-3 28.2-26.8 50.1-55.7 50.1c-30.9 0-56-25.1-56-56V56c0-30.9 25.1-56 56-56z"/></svg>`;
-    // const labIcon = fs.readFileSync(
-    //   path.join(__dirname, '../../../app-assets/icon.svg')
-    // );
-    // const openIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Pro 6.2.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2022 Fonticons, Inc. --><path d="M88.7 223.8L0 375.8V96C0 60.7 28.7 32 64 32H181.5c17 0 33.3 6.7 45.3 18.7l26.5 26.5c12 12 28.3 18.7 45.3 18.7H416c35.3 0 64 28.7 64 64v32H144c-22.8 0-43.8 12.1-55.3 31.8zm27.6 16.1C122.1 230 132.6 224 144 224H544c11.5 0 22 6.1 27.7 16.1s5.7 22.2-.1 32.1l-112 192C453.9 474 443.4 480 432 480H32c-11.5 0-22-6.1-27.7-16.1s-5.7-22.2 .1-32.1l112-192z"/></svg>`;
-    const serverIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Pro 6.2.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2022 Fonticons, Inc. --><path d="M64 32C28.7 32 0 60.7 0 96v64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64H64zM344 152c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24zm96-24c0 13.3-10.7 24-24 24s-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24zM64 288c-35.3 0-64 28.7-64 64v64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V352c0-35.3-28.7-64-64-64H64zM344 408c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24zm104-24c0 13.3-10.7 24-24 24s-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24z"/></svg>`;
-    // const externalLinkIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Pro 6.2.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2022 Fonticons, Inc. --><path d="M352 0c-12.9 0-24.6 7.8-29.6 19.8s-2.2 25.7 6.9 34.9L370.7 96 201.4 265.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L416 141.3l41.4 41.4c9.2 9.2 22.9 11.9 34.9 6.9s19.8-16.6 19.8-29.6V32c0-17.7-14.3-32-32-32H352zM80 32C35.8 32 0 67.8 0 112V432c0 44.2 35.8 80 80 80H400c44.2 0 80-35.8 80-80V320c0-17.7-14.3-32-32-32s-32 14.3-32 32V432c0 8.8-7.2 16-16 16H80c-8.8 0-16-7.2-16-16V112c0-8.8 7.2-16 16-16H192c17.7 0 32-14.3 32-32s-14.3-32-32-32H80z"/></svg>`;
 
-    // const showNewsFeed = userSettings.getValue(SettingType.showNewsFeed);
-    // if (showNewsFeed) {
-    //   // initalize from app cache
-    //   WelcomeView._newsList = appData.newsList;
-    // }
+    const scigetLogo = fs.readFileSync(
+      path.join(__dirname, '../../../app-assets/sciget-icon.svg')
+    );
+
+    // Load mini apps from container installer YAML files
+    const dynamicMiniApps = loadMiniAppsFromContainerInstaller();
+    const miniAppsJson = JSON.stringify(dynamicMiniApps, null, 2);
 
     this._pageSource = `
       <!DOCTYPE html>
@@ -57,195 +116,434 @@ export class WelcomeView {
           <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
           <title>Welcome</title>
           <style>
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+
             body {
               background: ${LightThemeBGColor};
               color: #000000;
               margin: 0;
-              overflow: hidden;
+              overflow-x: hidden;
+              overflow-y: auto;
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica,
                 Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
                 'Segoe UI Symbol';
               font-size: 13px;
               -webkit-user-select: none;
               user-select: none;
+              min-height: 100vh;
+              padding: 20px;
             }
+
             body.app-ui-dark {
               background: ${DarkThemeBGColor};
               color: #ffffff;
             }
+
             .container {
-              height: calc(100vh - 100px);
-              padding: 80px 120px 20px 120px;
-              font-size: 16px;
-              display: flex;
-              flex-direction: column;
+                max-width: 1200px;
+                margin: 0 auto;
             }
-            .row {
-              display: flex;
-              flex-direction: row;
-              font-size: 14px;
-              line-height: 18px;
+
+            .header {
+                text-align: center;
+                margin-bottom: 40px;
+                color: #1f2937;
             }
-            .col {
-              display: flex;
-              flex-direction: column;
+
+            .app-ui-dark .header {
+                color: #e5e7eb;
             }
-            .logo svg {
-              width: 80px;
-              height: 80px;
+
+            .header h1 {
+                font-size: 2.5rem;
+                margin-bottom: 10px;
+                font-weight: 700;
             }
-            .app-title-row {
-              align-items: center;
-              column-gap: 10px;
-              margin-bottom: 80px;
+
+            .header p {
+                font-size: 1.1rem;
+                opacity: 0.9;
             }
-            .app-title {
-              font-size: 30px;
-            }
-            .content-row {
-              flex-grow: 1;
-            }
-            .start-recent-col {
-              width: 40%;
-              flex-basis: 40%;
-              flex-grow: 1;
-            }
-            .news-list-hidden .start-recent-col {
-              width: 60%;
-              flex-basis: 60%;
-            }
-            .start-col {
+
+            .apps-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+              gap: 24px;
               margin-bottom: 40px;
-              row-gap: 2px;
-            }
-            .recent-col {
-              row-gap: 5px;
-              max-height: 200px;
-              overflow-y: hidden;
-            }
-            .recent-col.recents-expanded {
-              overflow-y: auto;
-            }
-            .recent-col .row-title {
-              position: sticky;
-              top: 0;
-              background: ${LightThemeBGColor};
-            }
-            .app-ui-dark .recent-col .row-title {
-              background: ${DarkThemeBGColor};
-            }
-            .recent-col.recents-collapsed > div:nth-child(n+${
-              maxRecentItems + 2
-            }).recent-session-row {
-              display: none;
-            }
-            .row-title {
-              font-weight: bold;
-              margin-bottom: 5px;
-              font-size: 16px;
-            }
-            a, .recent-session-link {
-              color: #555555;
-              text-decoration: none;
-              cursor: pointer;
-            }
-            a:hover, .recent-session-link:hover {
-              color: #777777;
-            }
-            .app-ui-dark a, .app-ui-dark .recent-session-link {
-              color: #cccccc;
-            }
-            .app-ui-dark a:hover, .app-ui-dark .recent-session-link:hover {
-              color: #eeeeee;
-            }
-            .more-row a {
-              color: #202020;
-            }
-            a.disabled, .recent-session-link.disabled {
-              pointer-events: none;
-              opacity: 0.5;
-            }
-            .app-ui-dark .more-row a {
-              color: #f0f0f0;
-            }
-            .neurodesk-logo svg {
-              width: 300px;
-            }
-            .app-ui-dark .neurodesk-logo {
-              width: 300px;
-              fill: #888888
-            }
-            .neurodesk-logo .jp-icon2 {
-              fill: #888888;
-            }
-            .recent-session-link {
-              white-space: nowrap;
-            }
-            .recent-session-detail {
-              padding-left: 10px;
-            }
-            .recent-session-detail, .news-list-col .row a {
-              text-overflow: ellipsis;
-              overflow: hidden;
-              white-space: nowrap;
-            }
-            .recent-session-row {
-              align-items: center;
-            }
-            .recent-session-delete {
-              height: 18px;
-              margin-left: 10px;
-              visibility: hidden;
-            }
-            .recent-session-row:hover .recent-session-delete {
-              visibility: visible;
-              transition-delay: 1s;
-              cursor: pointer;
-            }
-            .recent-session-row .delete-button {
-              width: 16px;
-              height: 16px;
-              padding-top: 1px;
-              fill: #555555;
-            }
-            .app-ui-dark .recent-session-row .delete-button {
-              fill: #bcbcbc;
-            }
-            .no-recent-message {
-              color: #777777;
-            }
-            .app-ui-dark .no-recent-message {
-              color: #999999;
-            }
-            .action-row a {
+          }
+
+          .app-card {
+              background: white;
+              border-radius: 4px;
+              padding: 24px;
+              box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+              transition: all 0.3s ease;
+              position: relative;
+          }
+
+          .app-ui-dark .app-card {
+              background: #4f4f4f;
+              box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+          }
+
+          .app-card:hover {
+              box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+          }
+
+          .app-ui-dark .app-card:hover {
+              box-shadow: 0 20px 40px rgba(66, 66, 66, 0.4);
+          }
+
+          .app-title {
+              font-size: 1.4rem;
+              font-weight: 600;
+              margin-bottom: 8px;
+              color: #2d3748;
+          }
+
+          .app-ui-dark .app-title {
+              color: #e2e8f0;
+          }
+
+          .app-description {
+              color: #718096;
+              margin-bottom: 16px;
+              line-height: 1.5;
+          }
+
+          .app-ui-dark .app-description {
+              color: #a0aec0;
+          }
+
+          .app-logo-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            column-gap: 10px;
+          }
+          
+          .app-logo {
+            font-size: 30px;
+          }
+
+          .neurodesk-logo svg {
+            width: 300px;
+          }
+
+          .neurodesk-logo {
+            color: #0c0e0a;
+          }
+
+          .app-ui-dark .neurodesk-logo {
+            color: #ffffff;
+          }
+
+          .announcement-card {
+            border-top: 4px solid #6aa329;
+          }
+
+          .app-ui-dark .announcement-card {
+            border-top-color: #b7d886;
+          }
+
+          .announcement-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+          }
+
+          .sciget-logo {
+            flex: 0 0 50px;
+          }
+
+          .sciget-logo svg {
+            display: block;
+            width: 50px;
+            height: 50px;
+          }
+
+          .announcement-heading .app-title {
+            margin-bottom: 0;
+          }
+
+          .announcement-label {
+            display: inline-block;
+            margin-bottom: 4px;
+            color: #4f7d23;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+
+          .app-ui-dark .announcement-label {
+            color: #c8e6a6;
+          }
+
+          .launch-buttons {
               display: flex;
-              flex-direction: row;
-              align-items: center;
+              gap: 12px;
+          }
+
+          .launch-btn {
+              flex: 1;
+              padding: 12px 16px;
+              border: none;
+              border-radius: 4px;
+              font-weight: 600;
+              cursor: pointer;
+              transition: all 0.2s ease;
+              font-size: 0.9rem;
+              position: relative;
+              overflow: hidden;
             }
-            .action-row span {
-              margin-right: 8px;
-              padding-top: 4px;
-              width: 26px;
-              height: 26px;
+
+            .launch-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
             }
-            .action-row svg {
-              width: 22px;
-              height: 22px;
-              fill: #555555;
+
+            .remote-btn {
+                background:rgb(201, 201, 201);
+                color: black;
             }
-            .app-ui-dark .action-row svg {
-              fill: #dddddd;
+
+            .remote-btn:hover:not(:disabled) {
+                background:rgb(103, 102, 102);
+                color: white;
             }
-            .new-notebook-action-row svg {
-              width: 25px;
-              height: 25px;
-              margin-left: -1px;
+
+            .local-btn {
+                background: #6aa329;
+                color: white;
             }
-            .new-session-action-row svg {
-              width: 26px;
-              height: 26px;
-              margin-left: -2px;
+
+            .local-btn:hover:not(:disabled) {
+                background: #b7d886;
             }
+
+            .launch-btn.loading {
+                pointer-events: none;
+            }
+
+            .launch-btn.loading::after {
+                content: '';
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 16px;
+                height: 16px;
+                margin: -8px 0 0 -8px;
+                border: 2px solid transparent;
+                border-top: 2px solid currentColor;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+
+            /* Split button */
+            .split-btn-wrapper {
+                flex: 1;
+                display: flex;
+                position: relative;
+            }
+
+            .split-btn-main {
+                flex: 1;
+                padding: 12px 16px;
+                border: none;
+                border-radius: 4px 0 0 4px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                font-size: 0.9rem;
+                background: #b7d886;
+                color: black;
+            }
+
+            .split-btn-main:hover {
+                background: #6aa329;
+                color: white;
+            }
+
+            .split-btn-arrow {
+                padding: 12px 10px;
+                border: none;
+                border-left: 1px solid rgba(0, 0, 0, 0.15);
+                border-radius: 0 4px 4px 0;
+                font-size: 0.7rem;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                background: #b7d886;
+                color: black;
+            }
+
+            .split-btn-arrow:hover {
+                background: #6aa329;
+                color: white;
+            }
+
+            .version-dropdown {
+                display: none;
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                margin-top: 4px;
+                background: white;
+                border-radius: 4px;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+                z-index: 100;
+                max-height: 250px;
+                overflow-y: auto;
+            }
+
+            .app-ui-dark .version-dropdown {
+                background: #2d2d2d;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
+            }
+
+            .version-dropdown.open {
+                display: block;
+            }
+
+            .version-dropdown-item {
+                padding: 8px 14px;
+                cursor: pointer;
+                font-size: 0.85rem;
+                color: #2d3748;
+                transition: background 0.15s;
+            }
+
+            .app-ui-dark .version-dropdown-item {
+                color: #e2e8f0;
+            }
+
+            .version-dropdown-item:first-child {
+                border-radius: 4px 4px 0 0;
+            }
+
+            .version-dropdown-item:hover {
+                background: rgba(66, 153, 225, 0.1);
+            }
+
+            .version-dropdown-item.latest-tag {
+                font-weight: 600;
+            }
+
+            .version-dropdown-loading {
+                padding: 12px 14px;
+                font-size: 0.85rem;
+                color: #718096;
+                text-align: center;
+            }
+
+            .version-dropdown-custom {
+                padding: 8px 10px;
+                border-top: 1px solid rgba(0, 0, 0, 0.1);
+            }
+
+            .app-ui-dark .version-dropdown-custom {
+                border-top-color: rgba(255, 255, 255, 0.1);
+            }
+
+            .version-dropdown-custom input {
+                width: 100%;
+                padding: 6px 10px;
+                border: 1px solid #cbd5e0;
+                border-radius: 4px;
+                font-size: 0.85rem;
+                background: transparent;
+                color: inherit;
+                box-sizing: border-box;
+            }
+
+            .app-ui-dark .version-dropdown-custom input {
+                border-color: #4a5568;
+            }
+
+            .version-dropdown-custom input::placeholder {
+                color: #a0aec0;
+            }
+
+            .version-dropdown-custom input:focus {
+                outline: none;
+                border-color: #4299e1;
+            }
+
+            @media (max-width: 768px) {
+                .apps-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .header h1 {
+                    font-size: 2rem;
+                }
+
+                .launch-buttons {
+                    flex-direction: column;
+                }
+            }
+
+            .search-container {
+                position: relative;
+                max-width: 500px;
+                margin: 0 auto 40px auto;
+            }
+
+            .search-input {
+                width: 100%;
+                padding: 16px 50px 16px 20px;
+                border: none;
+                border-radius: 4px;
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(10px);
+                font-size: 1rem;
+                color: #2d3748;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+                transition: all 0.3s ease;
+            }
+
+            .app-ui-dark .search-input {
+                background: rgba(81, 81, 81, 0.95);
+                color: #e2e8f0;
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+            }
+
+            .search-input:focus {
+                outline: none;
+                background: white;
+                box-shadow: 0 12px 35px rgba(0, 0, 0, 0.15);
+            }
+
+            .app-ui-dark .search-input:focus {
+                background: #2d2d2d;
+                box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
+            }
+
+            .search-input::placeholder {
+                color: #a0aec0;
+            }
+
+            .search-icon {
+                position: absolute;
+                right: 16px;
+                top: 50%;
+                transform: translateY(-50%);
+                font-size: 18px;
+                color: #a0aec0;
+                pointer-events: none;
+            }
+
             #notification-panel {
               position: sticky;
               bottom: 0;
@@ -273,8 +571,85 @@ export class WelcomeView {
             .app-ui-dark #notification-panel .close-button {
               fill: #bcbcbc;
             }
-            .recent-expander-col {
+            #survey-reminder {
+              position: fixed;
+              bottom: 24px;
+              right: 24px;
+              width: 280px;
+              background: white;
+              border-radius: 4px;
+              box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+              padding: 16px;
+              z-index: 1000;
               display: none;
+            }
+            .app-ui-dark #survey-reminder {
+              background: #4f4f4f;
+              box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            }
+            #survey-reminder-header {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              margin-bottom: 8px;
+            }
+            #survey-reminder-title {
+              font-weight: 600;
+              font-size: 0.9rem;
+              color: #2d3748;
+            }
+            .app-ui-dark #survey-reminder-title {
+              color: #e2e8f0;
+            }
+            #survey-reminder-close {
+              cursor: pointer;
+              width: 16px;
+              height: 16px;
+              fill: #a0aec0;
+              flex-shrink: 0;
+              margin-left: 8px;
+              margin-top: 1px;
+            }
+            #survey-reminder-close:hover {
+              fill: #718096;
+            }
+            .app-ui-dark #survey-reminder-close:hover {
+              fill: #e2e8f0;
+            }
+            .scroll-box {
+              max-height: 150px;
+              overflow-y: auto;
+              margin-bottom: 12px;
+            }
+            #survey-reminder-desc {
+              font-size: 0.72rem;
+              color: #718096;
+              margin-bottom: 12px;
+              line-height: 1.4;
+            }
+            #survey-reminder-desc-small {
+              font-size: 0.62rem;
+              color: #718096;
+              margin-bottom: 12px;
+              line-height: 1.4;
+            }
+            .app-ui-dark #survey-reminder-desc {
+              color: #a0aec0;
+            }
+            #survey-reminder-btn {
+              display: inline-block;
+              padding: 8px 16px;
+              background: #b7d886;
+              color: black;
+              font-weight: 600;
+              font-size: 0.85rem;
+              border-radius: 4px;
+              cursor: pointer;
+              border: none;
+              transition: background 0.2s ease;
+            }
+            #survey-reminder-btn:hover {
+              background: #6aa329;
             }
           </style>
           <script>
@@ -285,7 +660,7 @@ export class WelcomeView {
             });
           </script>
         </head>
-      
+
         <body class="${this._isDarkTheme ? 'app-ui-dark' : ''} title="">
           <svg class="symbol" style="display: none;">
           <defs>
@@ -298,43 +673,22 @@ export class WelcomeView {
           </defs>
           </svg>
           <div class="container">
-            <div class="row app-title-row">
-              <div class="app-title">
+            <div class="row app-logo-row">
+              <div class="app-logo">
                 <div class="neurodesk-logo">
                     ${neurodeskLogo}
                 </div>
               </div>
             </div>
 
-            <div class="row content-row">
-              <div class="col start-recent-col">
-                <div class="col start-col">
-                  <div class="row row-title">
-                    Start
-                  </div>
-                  <div class="row action-row new-notebook-action-row">
-                    <a id="new-notebook-link" href="javascript:void(0)" title="Create new Neurodesk instance (requires Docker)" onclick="handleNewSessionClick('notebook');">
-                    <span class="action-icon">${neurodeskIcon}</span>
-                      Open Local Neurodesk..
-                    </a>
-                  </div>
-                  <div class="row action-row">
-                    <a href="javascript:void(0)" title="Connect to a remote Neurodesk server" onclick="handleNewSessionClick('remote');">
-                      <span class="action-icon">  
-                      ${serverIcon}
-                      </span>
-                      Connect to remote Neurodesk server..
-                    </a>
-                  </div>
-                </div>
-                
-                <div id="recent-sessions-col" class="col recent-col">
-                  <div id="recent-sessions-title" class="row row-title">
-                    Recent sessions
-                  </div>
-                </div>
+              <div class="search-container">
+                  <input type="text" id="searchInput" placeholder="Search apps..." class="search-input">
+                  <div class="search-icon">&#128269;</div>
               </div>
-            </div>
+
+              <div class="apps-grid" id="appsGrid">
+                  <!-- Apps will be dynamically generated here -->
+              </div>
           </div>
           <div id="notification-panel">
             <div id="notification-panel-message">
@@ -346,83 +700,139 @@ export class WelcomeView {
             </div>
           </div>
 
+          <div id="survey-reminder">
+            <div id="survey-reminder-header">
+              <span id="survey-reminder-title">Help us understand user needs</span>
+              <svg id="survey-reminder-close" onclick="this.parentElement.parentElement.style.display = 'none';" viewBox="0 0 512 512" title="Dismiss">
+                <use href="#circle-xmark" />
+              </svg>
+            </div>
+            <div class="scroll-box">
+            <p id="survey-reminder-desc">The Neurodesk team is conducting a voluntary online survey lasting approximately 15 minutes, or up to 25 minutes if you use more than one of the platforms, about experiences with Neurodesk, NeurodeskEDU and/or Sciget, priorities for future features, and views about possible future collection of platform usage data.</p>
+            <p id="survey-reminder-desc-small">The research survey does not collect usage logs. Most questions use rating scales or multiple-choice responses. No compensation is offered, and taking part will not affect your access or support. Read the study information and decide whether to participate in the survey.</p>
+            </div>
+            <button id="survey-reminder-btn" onclick="openSurveyLink()">Participate</button>
+          </div>
+
           <script>
 
           const notificationPanel = document.getElementById('notification-panel');
           const notificationPanelMessage = document.getElementById('notification-panel-message');
           const notificationPanelCloseButton = document.getElementById('notification-panel-close');
-          const recentSessionsCol = document.getElementById('recent-sessions-col');
-          const recentSessionsTitle = document.getElementById('recent-sessions-title');
 
-          function updateRecentSessionList(recentSessions, resetCollapseState) {
-            const maxRecentItems = ${maxRecentItems};
-            // clear list
-            while (recentSessionsTitle.nextSibling) {
-              recentSessionsTitle.nextSibling.remove();
+          // Mini apps data loaded from container installer YAML files
+          const miniApps = ${miniAppsJson};
+
+          // Function to filter apps based on search term
+          function filterApps(searchTerm) {
+            if (!searchTerm.trim()) {
+                return miniApps;
             }
 
-            let recentSessionCount = 0;
-
-            const fragment = new DocumentFragment();
-
-            for (const recentSession of recentSessions) {
-              const {isRemote, linkLabel, linkTooltip, linkDetail} = recentSession;
-              const recentSessionRow = document.createElement('div');
-              recentSessionRow.classList.add("row");
-              recentSessionRow.classList.add("recent-session-row");
-              recentSessionRow.dataset.sessionIndex = recentSessionCount;
-              recentSessionRow.innerHTML = \`
-                  <div class="recent-session-link\$\{!isRemote ? ' recent-item-local' : ''\}" onclick='handleRecentSessionClick(event);' title="\$\{linkTooltip\}">\$\{linkLabel\}</div>
-                  \$\{linkDetail ? \`<div class="recent-session-detail" title="\$\{linkDetail\}">\$\{linkDetail\}</div>\`: ''}
-                  <div class="recent-session-delete" title="Remove" onclick="handleRecentSesssionDeleteClick(event)">
-                    <svg class="delete-button" version="2.0">
-                      <use href="#circle-xmark" />
-                    </svg>
-                  </div>\`;
-
-              fragment.append(recentSessionRow);
-
-              recentSessionCount++;
-            }
-
-            if (recentSessionCount === 0) {
-              const noHistoryMessage = document.createElement('div');
-              noHistoryMessage.className = 'no-recent-message';
-              noHistoryMessage.innerText = 'No history yet';
-              fragment.append(noHistoryMessage);
-            }
-
-            recentSessionsCol.append(fragment);
-
-            // also reset if item remove causes count to get back to limit
-            resetCollapseState = resetCollapseState || recentSessionCount <= maxRecentItems;
-
-            if (resetCollapseState) {
-              const recentExpanderCol = document.getElementById('recent-expander-col');
-              if (recentSessionCount > maxRecentItems) {
-                recentSessionsCol.classList.add('recents-collapsed');
-                recentExpanderCol.style.display = 'block';
-              } else {
-                recentSessionsCol.classList.remove('recents-collapsed');
-                recentSessionsCol.classList.remove('recents-expanded');
-                recentExpanderCol.style.display = 'none';
-              }
-            }
+            const term = searchTerm.toLowerCase();
+            return miniApps.filter(app =>
+                app.title.toLowerCase().includes(term) ||
+                app.description.toLowerCase().includes(term)
+            );
           }
 
-          window.electronAPI.onSetRecentSessionList((recentSessions, resetCollapseState) => {
-            updateRecentSessionList(recentSessions, resetCollapseState);
+          // Function to create app card HTML
+          function createAppCard(app) {
+              const hasReleaseHistory = !!app.releaseHistoryUrl;
+              const localButton = hasReleaseHistory
+                ? \`<div class="split-btn-wrapper">
+                      <button class="split-btn-main"
+                              onclick="launchLatestVersion('\$\{app.id\}')">
+                          Launch Local
+                      </button>
+                      <button class="split-btn-arrow"
+                              onclick="toggleVersionDropdown(event, '\$\{app.id\}')">
+                          &#9660;
+                      </button>
+                      <div class="version-dropdown" id="dropdown-\$\{app.id\}"
+                           data-release-url="\$\{app.releaseHistoryUrl\}"
+                           data-default-version="\$\{app.defaultVersion || ''}\}"
+                           data-app-title="\$\{app.title\}"
+                           data-loaded="false">
+                      </div>
+                  </div>\`
+                : \`<button class="launch-btn local-btn"
+                          onclick="handleNewSessionClick('notebook', '\$\{app.title\}', null, '\$\{app.id\}')">
+                      Launch Local
+                  </button>\`;
+
+              return \`
+                  <div class="app-card" id="\$\{app.id\}">
+                      <h3 class="app-title">\$\{app.title\}</h3>
+                      <p class="app-description">\$\{app.description\}</p>
+
+                      <div class="launch-buttons">
+                          \$\{localButton\}
+                          <button class="launch-btn remote-btn"
+                                  onclick="handleNewRemoteSessionClick('remote', '\$\{app.remoteUrl\}', '\$\{app.id\}');location.href='javascript:void(0)'">
+                              Launch Remote
+                          </button>
+                      </div>
+                  </div>
+              \`;
+          }
+
+          // Function to render all apps (updated to handle filtering)
+          function renderApps(filteredApps = miniApps) {
+              const appsGrid = document.getElementById('appsGrid');
+              const searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
+              const announcementText = 'coming next sciget next version neurodesk app scientific work';
+              const showAnnouncement = !searchTerm || announcementText.includes(searchTerm);
+
+              if (filteredApps.length === 0 && !showAnnouncement) {
+                  appsGrid.innerHTML = \`
+                      <div style="grid-column: 1 / -1; text-align: center; padding: 40px;">
+                          <h3 style="margin-bottom: 8px;">No apps found</h3>
+                          <p style="opacity: 0.8;">Try adjusting your search terms</p>
+                      </div>
+                  \`;
+                  return;
+              }
+
+              const announcementHTML = showAnnouncement
+                ? \`<aside class="app-card announcement-card" aria-labelledby="sciget-announcement-title">
+                     <div class="announcement-header">
+                       <div class="sciget-logo" aria-hidden="true">${scigetLogo}</div>
+                       <div class="announcement-heading">
+                         <span class="announcement-label">Coming next</span>
+                         <h3 class="app-title" id="sciget-announcement-title">SciGet</h3>
+                       </div>
+                     </div>
+                     <p class="app-description">The next version of Neurodesk App will be called SciGet, with a broader selection for scientific domains.</p>
+                   </aside>\`
+                : '';
+              const appsHTML = filteredApps.map(createAppCard).join('') + announcementHTML;
+
+              appsGrid.innerHTML = appsHTML;
+          }
+
+          // Add search functionality
+          const searchInput = document.getElementById('searchInput');
+          searchInput.addEventListener('input', (e) => {
+              const searchTerm = e.target.value;
+              const filteredApps = filterApps(searchTerm);
+              renderApps(filteredApps);
+          });
+
+          // Initialize the app
+          document.addEventListener('DOMContentLoaded', () => {
+              renderApps();
           });
 
           document.addEventListener('dragover', (event) => {
             event.preventDefault();
             event.stopPropagation();
           });
-          
+
           document.addEventListener('drop', (event) => {
             event.preventDefault();
             event.stopPropagation();
-        
+
             const files = [];
             for (const file of event.dataTransfer.files) {
               files.push(file.path);
@@ -431,40 +841,120 @@ export class WelcomeView {
             window.electronAPI.openDroppedFiles(files);
           });
 
-          function handleNewSessionClick(type) {
-            window.electronAPI.newSession(type);
+          function handleNewSessionClick(type, containerConfigName, imageVersion, miniAppId) {
+            window.electronAPI.newSession(type, containerConfigName, undefined, imageVersion || undefined, miniAppId);
           }
 
-          function handleRecentSessionClick(event) {
-            const row = event.currentTarget.closest('.recent-session-row');
-            if (!row) {
+          async function launchLatestVersion(appId) {
+            const dropdown = document.getElementById('dropdown-' + appId);
+            const button = document.getElementById(appId).querySelector('.split-btn-main');
+            const appTitle = dropdown.dataset.appTitle;
+            const defaultVersion = dropdown.dataset.defaultVersion;
+            button.disabled = true;
+            button.textContent = 'Checking latest version...';
+
+            try {
+              const versions = await window.electronAPI.fetchReleases(
+                dropdown.dataset.releaseUrl,
+                defaultVersion
+              );
+              handleNewSessionClick('notebook', appTitle, versions[0] || defaultVersion, appId);
+            } catch (err) {
+              console.error('Failed to load release history:', err);
+              handleNewSessionClick('notebook', appTitle, defaultVersion, appId);
+            } finally {
+              button.disabled = false;
+              button.textContent = 'Launch Local';
+            }
+          }
+
+          function handleNewRemoteSessionClick(type, remoteUrl, miniAppId) {
+            // Parse the comma-separated string back to array
+            const remoteUrlArray = typeof remoteUrl === 'string' ? remoteUrl.split(',') : remoteUrl;
+            window.electronAPI.newSession(type, undefined, remoteUrlArray, undefined, miniAppId);
+          }
+
+          // Close any open dropdown when clicking outside
+          document.addEventListener('click', (e) => {
+            document.querySelectorAll('.version-dropdown.open').forEach(dd => {
+              if (!dd.parentElement.contains(e.target)) {
+                dd.classList.remove('open');
+              }
+            });
+          });
+
+          async function toggleVersionDropdown(event, appId) {
+            event.stopPropagation();
+            const dropdown = document.getElementById('dropdown-' + appId);
+            if (!dropdown) return;
+
+            // Toggle visibility
+            if (dropdown.classList.contains('open')) {
+              dropdown.classList.remove('open');
               return;
             }
-            const sessionIndex = parseInt(row.dataset.sessionIndex);
-            window.electronAPI.openRecentSession(sessionIndex);
-          }
 
-          function handleRecentSesssionDeleteClick(event) {
-            const row = event.currentTarget.closest('.recent-session-row');
-            if (!row) {
-              return;
+            // Close other open dropdowns
+            document.querySelectorAll('.version-dropdown.open').forEach(dd => {
+              dd.classList.remove('open');
+            });
+
+            dropdown.classList.add('open');
+
+            // Load versions if not already loaded
+            if (dropdown.dataset.loaded === 'false') {
+              dropdown.innerHTML = '<div class="version-dropdown-loading">Loading versions...</div>';
+
+              const releaseUrl = dropdown.dataset.releaseUrl;
+              const defaultVersion = dropdown.dataset.defaultVersion;
+              const appTitle = dropdown.dataset.appTitle;
+
+              try {
+                const versions = await window.electronAPI.fetchReleases(releaseUrl, defaultVersion);
+                renderDropdownItems(dropdown, versions, appTitle);
+                dropdown.dataset.loaded = 'true';
+              } catch (err) {
+                dropdown.innerHTML = '<div class="version-dropdown-loading">Failed to load versions</div>';
+              }
             }
-            const sessionIndex = parseInt(row.dataset.sessionIndex);
-            window.electronAPI.deleteRecentSession(sessionIndex);
           }
 
-          function handleExpandCollapseRecents() {
-            const expandCollapseButton = document.getElementById("expand-collapse-recents");
-            const classList = recentSessionsCol.classList;
-            const isCollapsed = classList.contains("recents-collapsed");
-            if (isCollapsed) {
-              classList.remove("recents-collapsed");
-              classList.add("recents-expanded");
-              expandCollapseButton.innerText = "Less...";
-            } else {
-              classList.remove("recents-expanded");
-              classList.add("recents-collapsed");
-              expandCollapseButton.innerText = "More...";
+          function renderDropdownItems(dropdown, versions, appTitle) {
+            let html = '';
+            versions.forEach((version, i) => {
+              const label = i === 0 ? version + ' (Latest)' : version;
+              const cls = i === 0 ? 'version-dropdown-item latest-tag' : 'version-dropdown-item';
+              html += '<div class="' + cls + '" onclick="selectVersion(\\'' + appTitle + '\\', \\'' + version + '\\')">' + label + '</div>';
+            });
+
+            // Custom tag input
+            html += '<div class="version-dropdown-custom">';
+            html += '<input type="text" placeholder="Custom tag (e.g. pre-release)" '
+                  + 'onkeydown="handleCustomTag(event, \\'' + appTitle + '\\')" />';
+            html += '</div>';
+
+            dropdown.innerHTML = html;
+          }
+
+          function selectVersion(appTitle, version) {
+            // Close all dropdowns
+            document.querySelectorAll('.version-dropdown.open').forEach(dd => {
+              dd.classList.remove('open');
+            });
+            const miniApp = miniApps.find(app => app.title === appTitle);
+            handleNewSessionClick('notebook', appTitle, version, miniApp?.id);
+          }
+
+          function handleCustomTag(event, appTitle) {
+            if (event.key === 'Enter') {
+              const tag = event.target.value.trim();
+              if (tag) {
+                document.querySelectorAll('.version-dropdown.open').forEach(dd => {
+                  dd.classList.remove('open');
+                });
+                const miniApp = miniApps.find(app => app.title === appTitle);
+                handleNewSessionClick('notebook', appTitle, tag, miniApp?.id);
+              }
             }
           }
 
@@ -475,7 +965,7 @@ export class WelcomeView {
           function showNotificationPanel(message, closable) {
             notificationPanelMessage.innerHTML = message;
             notificationPanel.style.display = "flex";
-            notificationPanelCloseButton.style.display = closable ? 'block' : 'none'; 
+            notificationPanelCloseButton.style.display = closable ? 'block' : 'none';
           }
 
           function closeNotificationPanel() {
@@ -485,6 +975,23 @@ export class WelcomeView {
           window.electronAPI.onSetNotificationMessage((message, closable) => {
             showNotificationPanel(message, closable);
           });
+
+          // Survey reminder: visible Oct 1 – Dec 1, 2026 (two-month window)
+          const SURVEY_URL = 'https://uniofqueensland.au1.qualtrics.com/jfe/form/SV_1MvJiHaCQZ4I0Tk';
+          const SURVEY_START = new Date('2026-10-01');
+          const SURVEY_END = new Date('2027-03-15');
+
+          function initSurveyReminder() {
+            const now = new Date();
+            if (now < SURVEY_START || now > SURVEY_END) return;
+            document.getElementById('survey-reminder').style.display = 'block';
+          }
+
+          function openSurveyLink() {
+            window.electronAPI.openNewsLink(SURVEY_URL);
+          }
+
+          document.addEventListener('DOMContentLoaded', initSurveyReminder);
 
           </script>
         </body>
@@ -506,30 +1013,7 @@ export class WelcomeView {
         resolve();
       });
     });
-
-    this.updateRecentSessionList(true);
-
-    // this._registry.getDefaultEnvironment().catch(() => {
-    //   this.disableLocalServerActions();
-    //   this.showNotification(
-    //     `
-    //     <div>
-    //       <svg style="width: 20px; height: 20px; fill: orange; margin-right: 6px;">
-    //         <use href="#triangle-exclamation" />
-    //       </svg>
-    //     </div>
-    //     Python environment not found. <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.InstallBundledPythonEnv}')">Install using the bundled installer</a> or <a href="javascript:void(0);" onclick="sendMessageToMain('${EventTypeMain.ShowServerSettings}')">Change the default Python environment</a>
-    //     `,
-    //     true
-    //   );
-    // });
   }
-
-  // disableLocalServerActions() {
-  //   this._viewReady.then(() => {
-  //     this._view.webContents.send(EventTypeRenderer.DisableLocalServerActions);
-  //   });
-  // }
 
   showNotification(message: string, closable: boolean) {
     this._viewReady.then(() => {
@@ -537,59 +1021,6 @@ export class WelcomeView {
         EventTypeRenderer.SetNotificationMessage,
         message,
         closable
-      );
-    });
-  }
-
-  updateRecentSessionList(resetCollapseState: boolean) {
-    const recentSessionList: IRecentSessionListItem[] = [];
-    const home = getUserHomeDir();
-
-    for (const recentSession of appData.recentSessions) {
-      let sessionItem = '';
-      let sessionDetail = '';
-      let tooltip = '';
-      // let parent = '';
-      if (recentSession.remoteURL) {
-        const url = new URL(recentSession.remoteURL);
-        sessionItem = url.origin;
-        tooltip = `${recentSession.remoteURL}\nSession data ${
-          recentSession.persistSessionData ? '' : 'not '
-        }persisted`;
-        sessionDetail = '';
-      } else {
-        // local
-        // if (recentSession.filesToOpen.length > 0) {
-        //   sessionItem = path.basename(recentSession.filesToOpen[0]);
-        //   tooltip = recentSession.filesToOpen.join(', ');
-        //   parent = recentSession.workingDirectory;
-        // } else {
-        sessionItem = path.join(home, 'neurodesktop-storage');
-        // parent = path.dirname(recentSession.workingDirectory);
-        tooltip = path.join(home, 'neurodesktop-storage');
-        // }
-
-        // if (parent.startsWith(home)) {
-        //   const relative = path.relative(home, parent);
-        //   sessionDetail = `~${path.sep}${relative}`;
-        // } else {
-        //   sessionDetail = parent;
-        // }
-      }
-
-      recentSessionList.push({
-        isRemote: !!recentSession.remoteURL,
-        linkLabel: sessionItem,
-        linkTooltip: tooltip,
-        linkDetail: sessionDetail
-      });
-    }
-
-    this._viewReady.then(() => {
-      this._view.webContents.send(
-        EventTypeRenderer.SetRecentSessionList,
-        recentSessionList,
-        resetCollapseState
       );
     });
   }
