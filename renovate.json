@@ -113,9 +113,9 @@
     {
       "description": "Default Neurodesktop image the app launches, tracked to stable GitHub releases exactly as neurodesk.github.io does (replaces the broken sync_release.yml lookup).",
       "customType": "regex",
-      "managerFilePatterns": ["/^container_installer/neurodesk\\.yml$/"],
+      "managerFilePatterns": ["/^neurodesktop\\.toml$/"],
       "matchStrings": [
-        "defaultVersion:\\s*\"(?<currentValue>\\d{4}-\\d{2}-\\d{2})\""
+        "jupyter_neurodesk_version\\s*=\\s*\"(?<currentValue>\\d{4}-\\d{2}-\\d{2})\""
       ],
       "depNameTemplate": "neurodesk/neurodesktop",
       "datasourceTemplate": "github-releases",
