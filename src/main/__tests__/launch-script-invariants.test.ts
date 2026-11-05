@@ -2,7 +2,11 @@ import { execFileSync } from 'child_process';
 import { ContainerConfigParser } from '../config/containerConfigParser';
 import { EngineType } from '../config/settings';
 import * as fs from 'fs';
-import { generateLaunchScript, ILaunchScriptParams } from '../server';
+import {
+  generateLaunchScript,
+  getUserScopedContainerName,
+  ILaunchScriptParams
+} from '../server';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -192,7 +196,9 @@ describe('launch script invariants', () => {
         expect(script).not.toContain('undefined');
         // TinyRange has no --name flag; only Docker/Podman name the container.
         if (engineType !== EngineType.TinyRange) {
-          expect(script).toContain('--name neurodeskapp');
+          expect(script).toContain(
+            `--name ${getUserScopedContainerName('neurodeskapp')}`
+          );
         }
       }
     });
@@ -202,8 +208,12 @@ describe('launch script invariants', () => {
       // parser — they must never drift apart.
       for (const engineType of [EngineType.Docker, EngineType.Podman]) {
         const script = generateLaunchScript(baseParams({ engineType }));
-        expect(script).toContain('--name neurodeskapp');
-        expect(script).toContain(`${engineType} logs -f neurodeskapp`);
+        expect(script).toContain(
+          `--name ${getUserScopedContainerName('neurodeskapp')}`
+        );
+        expect(script).toContain(
+          `${engineType} logs -f ${getUserScopedContainerName('neurodeskapp')}`
+        );
       }
     });
 

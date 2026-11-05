@@ -12,6 +12,7 @@ export interface VariableContext {
   token: string;
   cvmfsDisable: string;
   tinyrangePath: string;
+  containerName?: string;
   buildDir?: string;
   storageDir?: string;
   additionalDir?: string;
@@ -176,7 +177,8 @@ export class ContainerConfigParser {
       '{additionalDir}': context.additionalDir || '',
       '{imageRegistry}': this.getImageName(),
       '{volume_mount}': context.volumeMount || '',
-      '{containerName}': this.containerConfig.containerName || ''
+      '{containerName}':
+        context.containerName || this.containerConfig.containerName || ''
     };
 
     for (const [placeholder, value] of Object.entries(substitutions)) {

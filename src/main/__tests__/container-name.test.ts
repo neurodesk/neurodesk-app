@@ -3,11 +3,12 @@ jest.mock('child_process', () => ({
   execSync: jest.fn()
 }));
 
+import * as os from 'os';
 import { execSync } from 'child_process';
 import { EngineType } from '../config/settings';
-import { resolveContainerName } from '../server';
+import { getUserScopedContainerName, resolveContainerName } from '../server';
 
-const execSyncMock = execSync as jest.Mock;
+const execSyncMock = jest.mocked(execSync);
 
 /** Override the read-only process.platform for a single test. */
 function withPlatform(platform: string, fn: () => void): void {
@@ -27,14 +28,14 @@ describe('resolveContainerName', () => {
     execSyncMock.mockReset();
   });
 
-  it('returns the name it was given for every engine', () => {
+  it('uses the host user ID for every engine', () => {
     for (const engineType of [
       EngineType.Docker,
       EngineType.Podman,
       EngineType.CrumbleCracker
     ]) {
-      expect(resolveContainerName(engineType, 'neurodeskapp')).toBe(
-        'neurodeskapp'
+      expect(resolveContainerName(engineType, 'neurodeskapp', 1001)).toBe(
+        'neurodeskapp-1001'
       );
     }
   });
@@ -47,11 +48,11 @@ describe('resolveContainerName', () => {
 
   it('removes a stale container before reusing the name (Docker)', () => {
     withPlatform('linux', () => {
-      resolveContainerName(EngineType.Docker, 'neurodeskapp');
+      resolveContainerName(EngineType.Docker, 'neurodeskapp', 1001);
     });
     expect(execSyncMock).toHaveBeenCalledTimes(1);
     expect(execSyncMock.mock.calls[0][0]).toContain(
-      'docker rm -f neurodeskapp'
+      'docker rm -f neurodeskapp-1001'
     );
   });
 
@@ -63,14 +64,14 @@ describe('resolveContainerName', () => {
 
     execSyncMock.mockReset();
     withPlatform('darwin', () =>
-      resolveContainerName(EngineType.Docker, 'neurodeskapp')
+      resolveContainerName(EngineType.Docker, 'neurodeskapp', 1001)
     );
     expect(execSyncMock.mock.calls[0][0]).not.toContain('timeout 30');
   });
 
   it('uses cmd.exe redirection on Windows', () => {
     withPlatform('win32', () =>
-      resolveContainerName(EngineType.Docker, 'neurodeskapp')
+      resolveContainerName(EngineType.Docker, 'neurodeskapp', 1001)
     );
     const cmd = execSyncMock.mock.calls[0][0];
     expect(cmd).toContain('>NUL 2>&1');
@@ -79,7 +80,7 @@ describe('resolveContainerName', () => {
 
   it('passes a hard timeout so a wedged daemon cannot block startup', () => {
     withPlatform('linux', () =>
-      resolveContainerName(EngineType.Docker, 'neurodeskapp')
+      resolveContainerName(EngineType.Docker, 'neurodeskapp', 1001)
     );
     expect(execSyncMock.mock.calls[0][1]).toMatchObject({ timeout: 35000 });
   });
@@ -89,9 +90,48 @@ describe('resolveContainerName', () => {
       throw new Error('No such container: neurodeskapp');
     });
     withPlatform('linux', () => {
-      expect(resolveContainerName(EngineType.Docker, 'neurodeskapp')).toBe(
-        'neurodeskapp'
-      );
+      expect(
+        resolveContainerName(EngineType.Docker, 'neurodeskapp', 1001)
+      ).toBe('neurodeskapp-1001');
     });
+  });
+});
+
+describe('user-scoped container names', () => {
+  it('keeps names stable across restarts and distinct across users', () => {
+    expect(getUserScopedContainerName('neurodeskapp', 1001)).toBe(
+      'neurodeskapp-1001'
+    );
+    expect(getUserScopedContainerName('neurodeskapp', 1002)).toBe(
+      'neurodeskapp-1002'
+    );
+    expect(getUserScopedContainerName('neurodeskapp', 0)).toBe(
+      'neurodeskapp-0'
+    );
+  });
+
+  it('uses the current host identity by default', () => {
+    const identity = process.getuid?.() ?? os.userInfo().username;
+    expect(getUserScopedContainerName('neurodeskapp')).toBe(
+      getUserScopedContainerName('neurodeskapp', identity)
+    );
+  });
+
+  it('does not collapse different Windows account names after sanitization', () => {
+    const first = getUserScopedContainerName('neurodeskapp', 'Jane Doe');
+    const second = getUserScopedContainerName('neurodeskapp', 'Jane-Doe');
+    expect(first).toMatch(/^neurodeskapp-[a-zA-Z0-9_.-]+$/);
+    expect(first).not.toBe(second);
+    expect(first).toBe(getUserScopedContainerName('neurodeskapp', 'Jane Doe'));
+  });
+
+  it('only cleans up the current user’s container', () => {
+    execSyncMock.mockReset();
+    resolveContainerName(EngineType.Docker, 'neurodeskapp', 1002);
+    expect(execSyncMock.mock.calls[0][0]).toContain(
+      'docker rm -f neurodeskapp-1002 '
+    );
+    expect(execSyncMock.mock.calls[0][0]).not.toContain('neurodeskapp-1001');
+    expect(execSyncMock.mock.calls[0][0]).not.toContain('rm -f neurodeskapp ');
   });
 });

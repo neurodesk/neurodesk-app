@@ -20,6 +20,26 @@ You can delete the stored session data manually at any time by using the `Clear 
 
 Neurodesk App stores data in ~/neurodesktop-storage as default.
 
+### Docker and Podman home directories on shared machines
+
+Each host account gets a separate container and persistent `/home/jovyan`
+volume. Their names end with your Unix UID, or a stable hash of your Windows
+account name. Restarting the app reuses your home volume and cleans up only
+your previous container.
+
+When upgrading from a version that used the shared `neurodesk-home` volume,
+the first launch starts with a new home directory. The old volume and its
+files remain available. Before upgrading, download the home-directory files
+you want to keep through JupyterLab, then upload them after upgrading. If you
+have already upgraded, ask the machine's administrator to recover your files
+from the retained volume. On a shared machine, the administrator must identify
+the owner before copying any files. The app does not copy another user's
+home directory automatically.
+
+The configured storage and additional host directories keep their existing
+paths. Container names are not an access-control boundary for users who can
+administer the same Docker daemon.
+
 # Uninstalling Neurodesk App
 
 ## Debian, Ubuntu Linux
