@@ -107,6 +107,8 @@ export interface ILaunchScriptParams {
   /** Host OS version (Ubuntu YYMM); empty when unknown. */
   osVersion: string;
   tinyrangePath: string;
+  containerName?: string;
+  volumeName?: string;
   /** Host directory mounted at the configured storage mount. */
   storageDirectory?: string;
   /** Host directory mounted at /data, if the user configured one. */
@@ -115,14 +117,24 @@ export interface ILaunchScriptParams {
   overrideDefaultServerArgs?: boolean;
 }
 
-/**
- * Resolve container name and remove any existing container with that name.
- */
+export function getUserScopedContainerName(
+  name: string,
+  userId: string | number = process.getuid?.() ?? os.userInfo().username
+): string {
+  const suffix =
+    typeof userId === 'number'
+      ? String(userId)
+      : createHash('sha256').update(userId).digest('hex').slice(0, 16);
+  return `${name}-${suffix}`;
+}
+
+/** Resolve the host user's name before removing their previous container. */
 export function resolveContainerName(
   engineType: EngineType,
-  name: string
+  name: string,
+  userId?: string | number
 ): string {
-  const containerName = name;
+  const containerName = getUserScopedContainerName(name, userId);
   if (engineType !== EngineType.Docker && engineType !== EngineType.Podman) {
     return containerName;
   }
@@ -171,6 +183,8 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     cvmfsMode,
     osVersion,
     tinyrangePath,
+    containerName: resolvedContainerName,
+    volumeName: resolvedVolumeName,
     storageDirectory,
     additionalDirectory = '',
     isNfsAdditionalDirectory = false,
@@ -184,11 +198,12 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
   const strPort = port.toString();
 
   const imageName = parser.getImageName();
-  const volumeMount = parser.getVolumeMount();
+  const volumeMount =
+    resolvedVolumeName || getUserScopedContainerName(parser.getVolumeMount());
   const storageMount = parser.getDefaultStorageMount();
-  // The same name the config puts in --name, so the lifecycle commands below
-  // can never address a different container than the one being launched.
-  const containerName = parser.getContainerName();
+  const containerName =
+    resolvedContainerName ||
+    getUserScopedContainerName(parser.getContainerName());
 
   // Keep path separators forward-slashed so the generated script is identical
   // no matter which OS generates it (the Windows tests run on Linux).
@@ -211,6 +226,7 @@ export function generateLaunchScript(params: ILaunchScriptParams): string {
     token,
     cvmfsDisable: cvmfsMode,
     tinyrangePath,
+    containerName,
     buildDir,
     storageDir,
     additionalDir,
@@ -506,6 +522,7 @@ function createLaunchScript(
     cvmfsMode: serverInfo.cvmfsMode.toString(),
     osVersion: getHostOsVersion(),
     tinyrangePath: '',
+    containerName,
     storageDirectory,
     additionalDirectory,
     isNfsAdditionalDirectory,

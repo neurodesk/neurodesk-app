@@ -83,4 +83,17 @@ Some website to handle the conversion:
 
 ## Container naming decision
 
-When spinning up a neurodesktop container, we name it `neurodeskapp-${strPort}` to avoid conflict with `neurodesktop` as in the website's instruction to run container and in case the app crashes and fails to remove the container correctly. However, a user reported issue losing their chat to Cursor IDE upon new launch because the container is renamed when it restarts. To keep it convenient for AI chat to be connected, we now set it consistently as `neurodeskapp` as users cannot create multiple instances.
+Docker and Podman use `neurodeskapp-<host-user-id>` for the container and
+`neurodesk-home-<host-user-id>` for its persistent home volume. On Unix, the
+suffix is the numeric UID. On Windows, it is the first 16 hexadecimal
+characters of the SHA-256 hash of the account name. Hashing preserves
+distinctions between names containing spaces or punctuation without putting
+shell metacharacters into generated commands.
+
+The names stay stable across app restarts so external tools can reconnect.
+Launch, log collection, ownership repair, and cleanup all address the same
+user's resources. Native CrumbleCracker sessions do not use these containers.
+
+The legacy `neurodesk-home` volume is retained. It is not copied automatically
+because a shared daemon cannot establish which host user owns its files.
+See the upgrade guidance in [user-guide.md](user-guide.md).

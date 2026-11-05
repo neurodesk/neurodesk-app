@@ -10,6 +10,7 @@ import {
 import {
   generateLaunchScript,
   getDefaultStorageDirectory,
+  getUserScopedContainerName,
   ILaunchScriptParams
 } from '../server';
 
@@ -47,6 +48,7 @@ function baseParams(overrides: ITestOverrides = {}): ILaunchScriptParams {
       platform === 'win32'
         ? 'C:\\neurodesktop-storage'
         : '~/neurodesktop-storage',
+    volumeName: 'neurodesk-home-1001',
     additionalDirectory: '',
     isNfsAdditionalDirectory: false,
     overrideDefaultServerArgs: false,
@@ -132,20 +134,37 @@ describe('generateLaunchScript', () => {
       expect(script).toContain('--shm-size=1gb');
     });
 
-    it('uses provided containerName', () => {
+    it('uses the resolved name for launch and cleanup', () => {
       const script = generateLaunchScript(
-        baseParams({ port: 9999, containerName: 'neurodeskapp' })
+        baseParams({ port: 9999, containerName: 'neurodeskapp-1001' })
       );
-      expect(script).toContain('--name neurodeskapp');
+      expect(script).toContain('--name neurodeskapp-1001');
+      expect(script).toContain('docker rm -f neurodeskapp-1001');
+      expect(script).toContain('docker logs -f neurodeskapp-1001');
     });
 
-    it('falls back to base name when containerName not provided', () => {
+    it('scopes the default name to the current host user', () => {
       const script = generateLaunchScript(
         baseParams({ port: 9999, containerName: undefined })
       );
-      expect(script).toContain('--name neurodeskapp');
+      expect(script).toContain(
+        `--name ${getUserScopedContainerName('neurodeskapp')}`
+      );
       expect(script).not.toContain('--name neurodeskapp-9999');
     });
+
+    it.each([EngineType.Docker, EngineType.Podman])(
+      'scopes home storage and ownership repair for %s',
+      engineType => {
+        const name = getUserScopedContainerName('neurodesk-home');
+        const script = generateLaunchScript(
+          baseParams({ engineType, volumeName: undefined })
+        );
+        expect(script).toContain(`${name}:/home/jovyan`);
+        expect(script).not.toContain('source=neurodesk-home,target=');
+        expect(script).not.toContain('-v neurodesk-home:/');
+      }
+    );
 
     it('includes port mapping', () => {
       const script = generateLaunchScript(baseParams({ port: 9999 }));
@@ -175,7 +194,7 @@ describe('generateLaunchScript', () => {
     it('uses --mount source for home volume (not -v)', () => {
       const script = generateLaunchScript(baseParams());
       expect(script).toContain(
-        '--mount source=neurodesk-home,target=/home/jovyan'
+        '--mount source=neurodesk-home-1001,target=/home/jovyan'
       );
     });
 
@@ -309,7 +328,7 @@ describe('generateLaunchScript', () => {
           engineType: EngineType.Podman
         })
       );
-      expect(script).toContain('-v neurodesk-home:/home/jovyan');
+      expect(script).toContain('-v neurodesk-home-1001:/home/jovyan');
     });
 
     it('includes bridge network config', () => {
@@ -329,8 +348,8 @@ describe('generateLaunchScript', () => {
           engineType: EngineType.Podman
         })
       );
-      expect(script).toContain('podman volume exists neurodesk-home');
-      expect(script).toContain('podman volume create neurodesk-home');
+      expect(script).toContain('podman volume exists neurodesk-home-1001');
+      expect(script).toContain('podman volume create neurodesk-home-1001');
     });
 
     it('uses fully qualified docker.io/ image name for all commands', () => {
@@ -631,7 +650,7 @@ describe('generateLaunchScript', () => {
     it('runs a chown container before launch for Docker', () => {
       const script = generateLaunchScript(baseParams());
       expect(script).toContain(
-        'docker run --rm --entrypoint chown -v neurodesk-home:/home/jovyan'
+        'docker run --rm --entrypoint chown -v neurodesk-home-1001:/home/jovyan'
       );
       expect(script).toContain('-R "$(id -u):100" /home/jovyan');
       // Must never fail the launch.
@@ -643,7 +662,7 @@ describe('generateLaunchScript', () => {
         baseParams({ engineType: EngineType.Podman, tag: '2024-01-01' })
       );
       expect(script).toContain(
-        'podman run --rm --entrypoint chown -v neurodesk-home:/home/jovyan docker.io/vnmd/neurodesktop:2024-01-01'
+        'podman run --rm --entrypoint chown -v neurodesk-home-1001:/home/jovyan docker.io/vnmd/neurodesktop:2024-01-01'
       );
     });
 
